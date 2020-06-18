@@ -48,7 +48,7 @@ private:
     olc::Renderable* spritesheet;
     // Player Camera
     olcPGEX_Camera2D camera;
-    
+
     struct mPlayer
     {
         float x;
@@ -107,7 +107,7 @@ public:
         mControlsText.emplace_back("WALK DOWN:  ARROW_DOWN");
         mControlsText.emplace_back("WALK LEFT:  ARROW_LEFT");
         mControlsText.emplace_back("WALK RIGHT: ARROW_RIGHT");
-	mControlsText.emplace_back("SHOOTING:   SPACE");
+        mControlsText.emplace_back("SHOOTING:   SPACE");
 
         // Initialize the story line text
         mStoryLine.emplace_back("THE OBJECTIVE IS TO....");
@@ -127,30 +127,30 @@ public:
 
         // Initialize our main player along side all sprites for main player
         player = { WINDOW_WIDTH, WINDOW_HEIGHT, false, false, 0, 0 };
-	PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
-	PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
-	spritesheet = new olc::Renderable();
-	spritesheet->Load("./sprites/character.png");
-	PlayerSprite.spriteSheet = spritesheet;
-	PlayerSprite.SetSpriteSize({32, 32});
+        PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
+        PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
+        spritesheet = new olc::Renderable();
+        spritesheet->Load("./sprites/character.png");
+        PlayerSprite.spriteSheet = spritesheet;
+        PlayerSprite.SetSpriteSize({ 32, 32 });
 
-	// Add animated player states
-	PlayerSprite.AddState("idle-down", {olc::vi2d(32, 0)});
-	PlayerSprite.AddState("walking-down", {olc::vi2d(0, 0), olc::vi2d(64, 0)});
-	PlayerSprite.AddState("idle-left", {olc::vi2d(32, 32)});
-	PlayerSprite.AddState("walking-left", {olc::vi2d(0, 32), olc::vi2d(64, 32)});
-	PlayerSprite.AddState("idle-right", {olc::vi2d(32, 64)});
-	PlayerSprite.AddState("walking-right", {olc::vi2d(0, 64), olc::vi2d(64, 64)});
-	PlayerSprite.AddState("idle-up", {olc::vi2d(32, 96)});
-	PlayerSprite.AddState("walking-up", {olc::vi2d(0, 96), olc::vi2d(64, 96)});
+        // Add animated player states
+        PlayerSprite.AddState("idle-down", { olc::vi2d(32, 0) });
+        PlayerSprite.AddState("walking-down", { olc::vi2d(0, 0), olc::vi2d(64, 0) });
+        PlayerSprite.AddState("idle-left", { olc::vi2d(32, 32) });
+        PlayerSprite.AddState("walking-left", { olc::vi2d(0, 32), olc::vi2d(64, 32) });
+        PlayerSprite.AddState("idle-right", { olc::vi2d(32, 64) });
+        PlayerSprite.AddState("walking-right", { olc::vi2d(0, 64), olc::vi2d(64, 64) });
+        PlayerSprite.AddState("idle-up", { olc::vi2d(32, 96) });
+        PlayerSprite.AddState("walking-up", { olc::vi2d(0, 96), olc::vi2d(64, 96) });
 
-	// Set players default state
-	PlayerSprite.SetState("idle-down");
+        // Set players default state
+        PlayerSprite.SetState("idle-down");
 
-	// Set Camera position
-	camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, {WINDOW_WIDTH, WINDOW_HEIGHT});
-	camera.vecCamPos = {player.x, player.y};
-	
+        // Set Camera position
+        camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, { WINDOW_WIDTH, WINDOW_HEIGHT });
+        camera.vecCamPos = { player.x, player.y };
+
         // Create all of our layers
         mLayerIndex = CreateLayer();
 
@@ -161,7 +161,7 @@ public:
     {
         delete sBackground;
         delete dBackground;
-	delete spritesheet;
+        delete spritesheet;
         bGameRunning = false;
     }
 
@@ -303,25 +303,25 @@ public:
         {
             player.walkingX = true;
             player.nX = player.x - TILE_SIZE;
-	    mSpriteStateName = "idle-left";
+            mSpriteStateName = "idle-left";
         }
         if ((GetKey(olc::DOWN).bPressed || GetKey(olc::DOWN).bHeld) && (!player.walkingY && !player.walkingX))
         {
             player.walkingY = true;
             player.nY = player.y + TILE_SIZE;
-	    mSpriteStateName = "idle-down";
+            mSpriteStateName = "idle-down";
         }
         if ((GetKey(olc::UP).bPressed || GetKey(olc::UP).bHeld) && (!player.walkingY && !player.walkingX))
         {
             player.walkingY = true;
             player.nY = player.y - TILE_SIZE;
-	    mSpriteStateName = "idle-up";
+            mSpriteStateName = "idle-up";
         }
         if ((GetKey(olc::RIGHT).bPressed || GetKey(olc::RIGHT).bHeld) && (!player.walkingX && !player.walkingY))
         {
             player.walkingX = true;
             player.nX = player.x + TILE_SIZE;
-	    mSpriteStateName = "idle-right";
+            mSpriteStateName = "idle-right";
         }
     }
 
@@ -329,61 +329,61 @@ public:
     {
         if (player.walkingX)
         {
-	    /* 
-	       TODO: Create CollisionCheck function that will check players collision on nearby collidable objects
-	       CollisionCheck will only check on close collidable objects and it will read from player.walkingX to only
-	       collide on objects that is on the x axist, same goes for y axis. Only check with collisions in the current moving direction
-	    */
-	    // if (CollisionCheck(player.nX)) 
+            /*
+               TODO: Create CollisionCheck function that will check players collision on nearby collidable objects
+               CollisionCheck will only check on close collidable objects and it will read from player.walkingX to only
+               collide on objects that is on the x axist, same goes for y axis. Only check with collisions in the current moving direction
+            */
+            // if (CollisionCheck(player.nX)) 
             if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
-	    {
+            {
                 player.x += SPEED * GetElapsedTime();;
-		mSpriteStateName = "walking-right";
-	    }
+                mSpriteStateName = "walking-right";
+            }
             if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
-	    {
+            {
                 player.x -= SPEED * GetElapsedTime();
-		mSpriteStateName = "walking-left";
-	    }
-	    
+                mSpriteStateName = "walking-left";
+            }
+
             if (std::abs(player.x - player.nX) < 1 || std::abs(player.x - player.nX) > 32)
             {
                 player.walkingX = false;
                 player.x = player.nX;
-		if (mSpriteStateName == "walking-left")
-		    mSpriteStateName = "idle-left";
-		else
-		    mSpriteStateName = "idle-right";
+                if (mSpriteStateName == "walking-left")
+                    mSpriteStateName = "idle-left";
+                else
+                    mSpriteStateName = "idle-right";
             }
         }
         if (player.walkingY)
         {
             if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
-	    {
+            {
                 player.y += SPEED * GetElapsedTime();
-		mSpriteStateName = "walking-down";
-	    }
+                mSpriteStateName = "walking-down";
+            }
             if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
-	    {
+            {
                 player.y -= SPEED * GetElapsedTime();
-		mSpriteStateName = "walking-up";
-	    }
+                mSpriteStateName = "walking-up";
+            }
 
             if (std::abs(player.y - player.nY) < 1 || std::abs(player.y - player.nY) > 32)
             {
                 player.walkingY = false;
                 player.y = player.nY;
-		if (mSpriteStateName == "walking-down")
-		    mSpriteStateName = "idle-down";
-		else
-		    mSpriteStateName = "idle-up";
+                if (mSpriteStateName == "walking-down")
+                    mSpriteStateName = "idle-down";
+                else
+                    mSpriteStateName = "idle-up";
             }
         }
-	camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, {WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2},
-								(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
-	camera.ClampCamera({0, 0}, {WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2});
-	PlayerSprite.SetState(mSpriteStateName);
-	PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
+        camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, { WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2 },
+            (olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
+        camera.ClampCamera({ 0, 0 }, { WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2 });
+        PlayerSprite.SetState(mSpriteStateName);
+        PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
     }
 
     void DrawMap()
