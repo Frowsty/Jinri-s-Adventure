@@ -1,5 +1,8 @@
 #define OLC_PGE_APPLICATION
+#define OLC_PGEX_ANIMSPR
 #include "olcPixelGameEngine.h"
+#include "olcPGEX_AnimatedSprite.h"
+#include "olcPGEX_Camera2D.h"
 #include <stdint.h>
 #include <random>
 
@@ -40,6 +43,12 @@ private:
     olc::Sprite* sBackground = nullptr;
     olc::Decal* dBackground = nullptr;
 
+    // Player sprite
+    olc::AnimatedSprite PlayerSprite;
+    olc::Renderable* spritesheet;
+    // Player Camera
+    olcPGEX_Camera2D camera;
+    
     struct mPlayer
     {
         float x;
@@ -52,6 +61,7 @@ private:
 
     // Create a player instance
     mPlayer player;
+    std::string mSpriteStateName = "idle-down";
 
     // FPS Counter
     bool mShowFPS = false;
@@ -97,6 +107,7 @@ public:
         mControlsText.emplace_back("WALK DOWN:  ARROW_DOWN");
         mControlsText.emplace_back("WALK LEFT:  ARROW_LEFT");
         mControlsText.emplace_back("WALK RIGHT: ARROW_RIGHT");
+	mControlsText.emplace_back("SHOOTING:   SPACE");
 
         // Initialize the story line text
         mStoryLine.emplace_back("THE OBJECTIVE IS TO....");
@@ -114,9 +125,32 @@ public:
         sBackground = new olc::Sprite("./sprites/logo.png");
         dBackground = new olc::Decal(sBackground);
 
-        // Initialize our main player
-        player = { 0, 0, false, false, 0, 0 };
+        // Initialize our main player along side all sprites for main player
+        player = { WINDOW_WIDTH, WINDOW_HEIGHT, false, false, 0, 0 };
+	PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
+	PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
+	spritesheet = new olc::Renderable();
+	spritesheet->Load("./sprites/character.png");
+	PlayerSprite.spriteSheet = spritesheet;
+	PlayerSprite.SetSpriteSize({32, 32});
 
+	// Add animated player states
+	PlayerSprite.AddState("idle-down", {olc::vi2d(32, 0)});
+	PlayerSprite.AddState("walking-down", {olc::vi2d(0, 0), olc::vi2d(64, 0)});
+	PlayerSprite.AddState("idle-left", {olc::vi2d(32, 32)});
+	PlayerSprite.AddState("walking-left", {olc::vi2d(0, 32), olc::vi2d(64, 32)});
+	PlayerSprite.AddState("idle-right", {olc::vi2d(32, 64)});
+	PlayerSprite.AddState("walking-right", {olc::vi2d(0, 64), olc::vi2d(64, 64)});
+	PlayerSprite.AddState("idle-up", {olc::vi2d(32, 96)});
+	PlayerSprite.AddState("walking-up", {olc::vi2d(0, 96), olc::vi2d(64, 96)});
+
+	// Set players default state
+	PlayerSprite.SetState("idle-down");
+
+	// Set Camera position
+	camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, {WINDOW_WIDTH, WINDOW_HEIGHT});
+	camera.vecCamPos = {player.x, player.y};
+	
         // Create all of our layers
         mLayerIndex = CreateLayer();
 
@@ -127,6 +161,7 @@ public:
     {
         delete sBackground;
         delete dBackground;
+	delete spritesheet;
         bGameRunning = false;
     }
 
@@ -176,10 +211,10 @@ public:
         DrawParticles();
 
         // Draw title and menu background
-        int iXPos = (WINDOW_WIDTH / 2) - (GetTextSize(mMenuTitle).x / 2) * 4;
+        int iXPos = (WINDOW_WIDTH * 0.5) - (GetTextSize(mMenuTitle).x * 0.5) * 4;
         int iYPos = 10;
         DrawStringDecal(olc::vi2d(iXPos, iYPos), mMenuTitle, olc::Pixel(172, 83, 194), olc::vf2d(4.0f, 4.0f));
-        iXPos = (WINDOW_WIDTH / 2) - (sBackground->width / 2) * 4;
+        iXPos = (WINDOW_WIDTH * 0.5) - (sBackground->width * 0.5) * 4;
         iYPos += (GetTextSize(mMenuTitle).y * 1.5) * 4;
         DrawDecal(olc::vi2d(iXPos, iYPos), dBackground, olc::vf2d(4.0f, 4.0f));
     }
@@ -197,11 +232,11 @@ public:
         int iXPos;
         for (auto& Item : mMenuItems)
         {
-            iXPos = (WINDOW_WIDTH / 2) - (GetTextSize(Item).x / 2) * 4;
+            iXPos = (WINDOW_WIDTH * 0.5) - (GetTextSize(Item).x * 0.5) * 4;
             if (i == 1)
-                iYPos = (WINDOW_HEIGHT / 2) - (GetTextSize(Item).y / 2) * 4;
+                iYPos = (WINDOW_HEIGHT * 0.5) - (GetTextSize(Item).y * 0.5) * 4;
             else
-                iYPos = (WINDOW_HEIGHT / 2) - ((GetTextSize(Item).y * 1.5) * 4) + ((GetTextSize(Item).y * i) * 4) + (mMenuPadding * (i - 1));
+                iYPos = (WINDOW_HEIGHT * 0.5) - ((GetTextSize(Item).y * 1.5) * 4) + ((GetTextSize(Item).y * i) * 4) + (mMenuPadding * (i - 1));
             if (mSelectedItem == i)
                 DrawStringDecal(olc::vi2d(iXPos, iYPos), Item, olc::Pixel(172, 83, 194), olc::vf2d(4.0f, 4.0f));
             else
@@ -225,24 +260,24 @@ public:
         for (auto& title : mMenuTutorial)
         {
             if (title.first == "KEYBINDINGS")
-                iXPos = (WINDOW_WIDTH / 2) / 2 - (GetTextSize(title.first).x / 2) * 4;
+                iXPos = (WINDOW_WIDTH * 0.5) * 0.5 - (GetTextSize(title.first).x * 0.5) * 3.5;
             else
-                iXPos = (WINDOW_WIDTH / 2) + (WINDOW_WIDTH / 2) / 2 - (GetTextSize(title.first).x / 2) * 4;
-            iYPos = (WINDOW_HEIGHT / 2) - (GetTextSize(title.first).y * 4);
+                iXPos = (WINDOW_WIDTH * 0.5) + (WINDOW_WIDTH * 0.5) * 0.5 - (GetTextSize(title.first).x * 0.5) * 3;
+            iYPos = (WINDOW_HEIGHT * 0.5) - (GetTextSize(title.first).y * 4);
             DrawStringDecal(olc::vi2d(iXPos, iYPos), title.first, olc::Pixel(175, 175, 175), olc::vf2d(3.0f, 3.0f));
             int i = 2;
             for (auto& text : title.second)
             {
                 if (title.first == "KEYBINDINGS")
-                    iXPos = (WINDOW_WIDTH / 2) / 2 - (GetTextSize(title.first).x / 2) * 4;
+                    iXPos = (WINDOW_WIDTH * 0.5) * 0.5 - (GetTextSize(title.first).x * 0.5) * 4;
                 else
-                    iXPos = (WINDOW_WIDTH / 2) + (WINDOW_WIDTH / 2) / 2 - (GetTextSize(title.first).x / 2) * 4;
-                iYPos = (WINDOW_HEIGHT / 2) - ((GetTextSize(text).y * 1.5) * 4) + ((GetTextSize(text).y * i) * 4) + (mMenuPadding * (i - 1));
+                    iXPos = (WINDOW_WIDTH * 0.5) + (WINDOW_WIDTH * 0.5) * 0.5 - (GetTextSize(title.first).x * 0.5) * 4;
+                iYPos = (WINDOW_HEIGHT * 0.5) - ((GetTextSize(text).y * 1.5) * 4) + ((GetTextSize(text).y * i) * 4) + (mMenuPadding * (i - 1));
                 DrawStringDecal(olc::vi2d(iXPos, iYPos), text, olc::Pixel(175, 175, 175), olc::vf2d(2.0f, 2.0f));
                 i++;
             }
         }
-        iXPos = (WINDOW_WIDTH / 2) - (GetTextSize("BACK").x / 2) * 4;
+        iXPos = (WINDOW_WIDTH * 0.5) - (GetTextSize("BACK").x * 0.5) * 4;
         iYPos = WINDOW_HEIGHT - (GetTextSize("BACK").y * 2) * 4;
         DrawStringDecal(olc::vi2d(iXPos, iYPos), "BACK", olc::Pixel(172, 83, 194), olc::vf2d(4.0f, 4.0f));
 
@@ -268,21 +303,25 @@ public:
         {
             player.walkingX = true;
             player.nX = player.x - TILE_SIZE;
+	    mSpriteStateName = "idle-left";
         }
         if ((GetKey(olc::DOWN).bPressed || GetKey(olc::DOWN).bHeld) && (!player.walkingY && !player.walkingX))
         {
             player.walkingY = true;
             player.nY = player.y + TILE_SIZE;
+	    mSpriteStateName = "idle-down";
         }
         if ((GetKey(olc::UP).bPressed || GetKey(olc::UP).bHeld) && (!player.walkingY && !player.walkingX))
         {
             player.walkingY = true;
             player.nY = player.y - TILE_SIZE;
+	    mSpriteStateName = "idle-up";
         }
         if ((GetKey(olc::RIGHT).bPressed || GetKey(olc::RIGHT).bHeld) && (!player.walkingX && !player.walkingY))
         {
             player.walkingX = true;
             player.nX = player.x + TILE_SIZE;
+	    mSpriteStateName = "idle-right";
         }
     }
 
@@ -290,39 +329,70 @@ public:
     {
         if (player.walkingX)
         {
-            if (player.x != player.nX && player.nX > player.x)
-                player.x += std::roundf((SPEED * GetElapsedTime()) * 100) / 100;
-            if (player.x != player.nX && player.nX < player.x)
-                player.x -= std::roundf((SPEED * GetElapsedTime()) * 100) / 100;
-            if (std::abs(player.x - player.nX) < 1)
+	    /* 
+	       TODO: Create CollisionCheck function that will check players collision on nearby collidable objects
+	       CollisionCheck will only check on close collidable objects and it will read from player.walkingX to only
+	       collide on objects that is on the x axist, same goes for y axis. Only check with collisions in the current moving direction
+	    */
+	    // if (CollisionCheck(player.nX)) 
+            if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
+	    {
+                player.x += SPEED * GetElapsedTime();;
+		mSpriteStateName = "walking-right";
+	    }
+            if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
+	    {
+                player.x -= SPEED * GetElapsedTime();
+		mSpriteStateName = "walking-left";
+	    }
+	    
+            if (std::abs(player.x - player.nX) < 1 || std::abs(player.x - player.nX) > 32)
             {
                 player.walkingX = false;
                 player.x = player.nX;
+		if (mSpriteStateName == "walking-left")
+		    mSpriteStateName = "idle-left";
+		else
+		    mSpriteStateName = "idle-right";
             }
         }
         if (player.walkingY)
         {
-            if (player.y != player.nY && player.nY > player.y)
-                player.y += std::roundf((SPEED * GetElapsedTime()) * 100) / 100;
-            if (player.y != player.nY && player.nY < player.y)
-                player.y -= std::roundf((SPEED * GetElapsedTime()) * 100) / 100;
+            if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
+	    {
+                player.y += SPEED * GetElapsedTime();
+		mSpriteStateName = "walking-down";
+	    }
+            if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
+	    {
+                player.y -= SPEED * GetElapsedTime();
+		mSpriteStateName = "walking-up";
+	    }
 
-            if (std::abs(player.y - player.nY) < 1)
+            if (std::abs(player.y - player.nY) < 1 || std::abs(player.y - player.nY) > 32)
             {
                 player.walkingY = false;
                 player.y = player.nY;
+		if (mSpriteStateName == "walking-down")
+		    mSpriteStateName = "idle-down";
+		else
+		    mSpriteStateName = "idle-up";
             }
         }
-        FillRect(player.x, player.y, 32, 32, olc::WHITE);
+	camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, {WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2},
+								(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
+	camera.ClampCamera({0, 0}, {WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2});
+	PlayerSprite.SetState(mSpriteStateName);
+	PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
     }
 
     void DrawMap()
     {
-        int y = WINDOW_HEIGHT / 32;
-        int x = WINDOW_WIDTH / 32;
+        int y = (WINDOW_HEIGHT * 2) / 32;
+        int x = (WINDOW_WIDTH * 2) / 32;
         for (int i = 0; i < y; i++)
             for (int j = 0; j < x; j++)
-                DrawRect(32 * j, 32 * i, 32, 32, olc::BLUE);
+                DrawRect((32 * j) - camera.vecCamPos.x, (32 * i) - camera.vecCamPos.y, 32, 32, olc::BLUE);
     }
 
     void RunGame()
