@@ -5,6 +5,10 @@
 #include "olcPGEX_Camera2D.h"
 #include <stdint.h>
 #include <random>
+#include "json.hpp"
+#include <typeinfo>
+
+using json = nlohmann::json;
 
 #define WINDOW_HEIGHT 800
 #define WINDOW_WIDTH 1024
@@ -23,6 +27,7 @@ private:
         END
     };
     int mGameState = 0;
+    bool initialized = false;
     std::vector<std::string> mMenuItems;
     std::map<std::string, std::vector<std::string>> mMenuTutorial;
     std::vector<std::string> mControlsText;
@@ -65,6 +70,7 @@ private:
 
     // FPS Counter
     bool mShowFPS = false;
+    bool mDebugCollidables = false;
 
     // Particles
     struct mParticle
@@ -77,12 +83,108 @@ private:
 
     std::list<mParticle> mParticles;
 
-    // Layers
-    int mLayerIndex;
+    struct mTile
+    {
+        std::string layer;
+        olc::vi2d position;
+        olc::vi2d tilesheetPos;
+    };
+
+    struct mCollider
+    {
+        std::string tag;
+        olc::vf2d position;
+        olc::vf2d size;
+    };
+
+    std::vector<mCollider*> mColliders;
+    mCollider mPlayerCollider;
+
+    olc::Renderable mSpriteSheet;
+    std::list<mTile> mTiles;
+    int mMapSizeX;
+    int mMapSizeY;
+
+    // Particle layer
+    int mLayerParticle;
 public:
     JinrisGame() = default;
 
 public:
+
+    // Pyxel json map parser
+    void LoadMap()
+    {
+        // This is not used by LoadMap, I only load the tilesheet here to access it later
+        // Figured it was best placed here since it's map related
+        mSpriteSheet.Load("./sprites/tilesheet.png");
+
+        std::ifstream i("./sprites/jmap.json");
+        json j = json::parse(i);
+
+        mMapSizeY = j.at("tileshigh");
+        mMapSizeX = j.at("tileswide");
+        olc::vi2d tileSize = { j.at("tilewidth"), j.at("tileheight") };
+	
+        int tileSheetWidth = mSpriteSheet.Sprite()->width / tileSize.x;
+	
+        auto layers = j.at("layers");
+
+        // Loop all the layers that we grab from the json file
+        for (auto& layer : layers)
+        {
+            // Loop each tile in the layer
+            for (auto& tile : layer.at("tiles"))
+            {
+                // This is the tile ID (position in the tilesheet / spritesheet) determined by Pyxel
+                int tileID = tile.at("tile");
+                // If tileID is -1 that means the tile has no tile aka is transparent
+                if (tileID != -1)
+                {
+                    std::string layerName = layer.at("name");
+                    int x = tile.at("x");
+                    int y = tile.at("y");
+                    x *= tileSize.x;
+                    y *= tileSize.y;
+
+                    int tileSheetPosY = 0;
+                    int tileSheetPosX = 0;
+		    
+		    // This is an easy way to know what Row in the tilesheet we want to grab the tile from
+                    if (tileID > tileSheetWidth)
+                    {
+                        int i = tileID;
+                        while (i > tileSheetWidth)
+                        {
+                            tileSheetPosY += 1;
+                            i -= tileSheetWidth;
+                        }
+                        tileSheetPosX = i - 1;
+                    }
+                    else
+                    {
+                        tileSheetPosX = tileID - 1;
+                    }
+		    
+		    // Make sure we grab just 1 tile / sprite
+                    tileSheetPosY *= tileSize.y;
+                    tileSheetPosX *= tileSize.x;
+
+                    // Here we store all tile values into a vector of tiles
+                    // The data we store is basically the position on the map where it's drawn
+                    // and also the position on the tileSheet where it's stored
+                    mTiles.push_back({ layerName, olc::vi2d(x, y), olc::vi2d(tileSheetPosX, tileSheetPosY) });
+
+                    // Used for my own collisions, ignore this (Credits to Witty bits for the collision struct from the relay race)
+                    if (layerName == "Colliders")
+                        mColliders.push_back(new mCollider{ "map_terrain", olc::vf2d(x, y), tileSize });
+                    if (layerName == "Collectables")
+                        mColliders.push_back(new mCollider{ "collectable", olc::vf2d(x, y), tileSize });
+                }
+            }
+        }
+    }
+
     bool OnUserCreate() override
     {
         // Set window title
@@ -90,12 +192,14 @@ public:
 
         bGameRunning = true;
 
+        LoadMap();
+
         // Initialize Random generator
         gen = std::mt19937(rd());
         PosDistr = std::uniform_int_distribution<>(0, WINDOW_WIDTH);
         SpdDistr = std::uniform_int_distribution<>(20, 50);
 
-        // Setup menu variables
+        // Setup menu options
         mMenuTitle = "JINRI'S ADVENTURE";
         mMenuItems.emplace_back("START GAME");
         mMenuItems.emplace_back("HOW TO PLAY");
@@ -126,7 +230,8 @@ public:
         dBackground = new olc::Decal(sBackground);
 
         // Initialize our main player along side all sprites for main player
-        player = { WINDOW_WIDTH, WINDOW_HEIGHT, false, false, 0, 0 };
+        player = { 0, 0, false, false, 0, 0 };
+        mPlayerCollider = { "player", { player.x, player.y }, { 32.0f, 32.0f } };
         PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
         PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
         spritesheet = new olc::Renderable();
@@ -152,7 +257,7 @@ public:
         camera.vecCamPos = { player.x, player.y };
 
         // Create all of our layers
-        mLayerIndex = CreateLayer();
+        mLayerParticle = CreateLayer();
 
         return true;
     }
@@ -187,7 +292,7 @@ public:
 
     void DrawParticles()
     {
-        SetDrawTarget(mLayerIndex);
+        SetDrawTarget(mLayerParticle);
         Clear(olc::BLACK);
 
         // Draw all the particles
@@ -199,7 +304,7 @@ public:
             p.y += p.vy * GetElapsedTime();
         }
 
-        EnableLayer(mLayerIndex, true);
+        EnableLayer(mLayerParticle, true);
         SetDrawTarget(nullptr);
     }
 
@@ -297,6 +402,38 @@ public:
             mGameState = 0;
     }
 
+
+    bool CheckCollision(mCollider& left, mCollider& right)
+    {
+        return true
+            && left.position.x == right.position.x
+            && left.position.y == right.position.y;
+    }
+
+    bool CheckCollisions()
+    {
+        for (auto c : mColliders)
+        {
+            if (CheckCollision(mPlayerCollider, *c))
+            {
+                if (c->tag == "collectable")
+                {
+                    return true;
+                }
+                else if (c->tag == "map_terrain")
+                {
+                    /*
+                    std::cout << "Colliding with: " << c->tag << std::endl;
+                    std::cout << "Collision: " << mPlayerCollider.position.x << " : " << mPlayerCollider.position.y << std::endl;
+                    std::cout << "Collider obj: " << c->position.x << " : " << c->position.y << std::endl;
+                    */
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     void PlayerInput()
     {
         if ((GetKey(olc::LEFT).bPressed || GetKey(olc::LEFT).bHeld) && (!player.walkingX && !player.walkingY))
@@ -327,72 +464,96 @@ public:
 
     void UpdatePlayer()
     {
+        mPlayerCollider.position = { player.nX, player.nY };
         if (player.walkingX)
         {
-            /*
-               TODO: Create CollisionCheck function that will check players collision on nearby collidable objects
-               CollisionCheck will only check on close collidable objects and it will read from player.walkingX to only
-               collide on objects that is on the x axist, same goes for y axis. Only check with collisions in the current moving direction
-            */
-            // if (CollisionCheck(player.nX)) 
-            if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
+            if (!CheckCollisions() && player.nX < (mMapSizeX * 32) && player.nX > -32)
             {
-                player.x += SPEED * GetElapsedTime();;
-                mSpriteStateName = "walking-right";
-            }
-            if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
-            {
-                player.x -= SPEED * GetElapsedTime();
-                mSpriteStateName = "walking-left";
-            }
+                if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
+                {
+                    player.x += SPEED * GetElapsedTime();;
+                    mSpriteStateName = "walking-right";
+                }
+                if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
+                {
+                    player.x -= SPEED * GetElapsedTime();
+                    mSpriteStateName = "walking-left";
+                }
 
-            if (std::abs(player.x - player.nX) < 1 || std::abs(player.x - player.nX) > 32)
+                if (std::abs(player.x - player.nX) < 1 || std::abs(player.x - player.nX) > 32)
+                {
+                    player.walkingX = false;
+                    player.x = player.nX;
+                    if (mSpriteStateName == "walking-left")
+                        mSpriteStateName = "idle-left";
+                    else
+                        mSpriteStateName = "idle-right";
+                }
+            }
+            else
             {
                 player.walkingX = false;
-                player.x = player.nX;
-                if (mSpriteStateName == "walking-left")
-                    mSpriteStateName = "idle-left";
-                else
-                    mSpriteStateName = "idle-right";
+                player.nX = player.x;
             }
         }
         if (player.walkingY)
         {
-            if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
+            if (!CheckCollisions() && player.nY < (mMapSizeY * 32) && player.nY > -32)
             {
-                player.y += SPEED * GetElapsedTime();
-                mSpriteStateName = "walking-down";
-            }
-            if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
-            {
-                player.y -= SPEED * GetElapsedTime();
-                mSpriteStateName = "walking-up";
-            }
+                if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
+                {
+                    player.y += SPEED * GetElapsedTime();
+                    mSpriteStateName = "walking-down";
+                }
+                if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
+                {
+                    player.y -= SPEED * GetElapsedTime();
+                    mSpriteStateName = "walking-up";
+                }
 
-            if (std::abs(player.y - player.nY) < 1 || std::abs(player.y - player.nY) > 32)
+                if (std::abs(player.y - player.nY) < 1 || std::abs(player.y - player.nY) > 32)
+                {
+                    player.walkingY = false;
+                    player.y = player.nY;
+                    if (mSpriteStateName == "walking-down")
+                        mSpriteStateName = "idle-down";
+                    else
+                        mSpriteStateName = "idle-up";
+                }
+            }
+            else
             {
                 player.walkingY = false;
-                player.y = player.nY;
-                if (mSpriteStateName == "walking-down")
-                    mSpriteStateName = "idle-down";
-                else
-                    mSpriteStateName = "idle-up";
+                player.nY = player.y;
             }
         }
         camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, { WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2 },
             (olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
-        camera.ClampCamera({ 0, 0 }, { WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2 });
+        camera.ClampCamera({ 0, 0 }, { mMapSizeX * 32.0f, mMapSizeY * 32.0f });
         PlayerSprite.SetState(mSpriteStateName);
         PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
     }
 
     void DrawMap()
     {
-        int y = (WINDOW_HEIGHT * 2) / 32;
-        int x = (WINDOW_WIDTH * 2) / 32;
+        /*
+        int y = mMapSizeY;
+        int x = mMapSizeX;
         for (int i = 0; i < y; i++)
-            for (int j = 0; j < x; j++)
-                DrawRect((32 * j) - camera.vecCamPos.x, (32 * i) - camera.vecCamPos.y, 32, 32, olc::BLUE);
+        for (int j = 0; j < x; j++)
+            DrawRect((32 * j) - camera.vecCamPos.x, (32 * i) - camera.vecCamPos.y, 32, 32, olc::BLUE);
+        */
+
+	for (auto& tile : mTiles)
+	{
+	    if (tile.position.y + (TILE_SIZE * 2) < camera.vecCamPos.y ||
+		tile.position.y - (TILE_SIZE * 2) > camera.vecCamPos.y + camera.vecCamViewSize.y ||
+		tile.position.x + (TILE_SIZE * 2) < camera.vecCamPos.x ||
+		tile.position.x - (TILE_SIZE * 2) > camera.vecCamPos.x + camera.vecCamViewSize.x)
+		continue;
+	    
+	    DrawPartialDecal(tile.position - camera.vecCamPos, mSpriteSheet.Decal(), tile.tilesheetPos, { 32, 32 });
+	}
     }
 
     void RunGame()
@@ -401,6 +562,15 @@ public:
         DrawMap();
         PlayerInput();
         UpdatePlayer();
+
+        // Debug collidables
+        if (mDebugCollidables)
+        {
+            for (auto c : mColliders)
+            {
+                FillRectDecal(c->position - camera.vecCamPos, c->size, olc::RED);
+            }
+        }
     }
 
     bool OnUserUpdate(float fElapsedTime) override
@@ -412,6 +582,8 @@ public:
             mGameState = 0;
         if (GetKey(olc::F12).bPressed)
             mShowFPS = !mShowFPS;
+        if (GetKey(olc::F11).bPressed)
+            mDebugCollidables = !mDebugCollidables;
         switch (mGameState)
         {
         case GameState::MENU:

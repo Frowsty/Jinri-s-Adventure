@@ -1,5 +1,5 @@
 build:
-	g++ -O3 -Wfatal-errors -std=c++17 \
+	g++ -O2 -Wfatal-errors -std=c++17 \
 	./src/demo.cpp \
 	-o game.exe \
 	-luser32 \
