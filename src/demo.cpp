@@ -3,10 +3,10 @@
 #include "olcPixelGameEngine.h"
 #include "olcPGEX_AnimatedSprite.h"
 #include "olcPGEX_Camera2D.h"
+#include "olcPGEX_SplashScreen.h"
 #include <stdint.h>
 #include <random>
 #include "json.hpp"
-#include <typeinfo>
 
 using json = nlohmann::json;
 
@@ -35,7 +35,7 @@ private:
     std::string mMenuTitle;
     int mSelectedItem = 1;
     int mMenuPadding = 2;
-    std::string mAppName = "Jinri's Adventure - Built using PixelGameEngine";
+    std::string mAppName = "Jinri's Adventure - The unknown ending";
 
     // Random number variables
     std::random_device rd;
@@ -53,6 +53,9 @@ private:
     olc::Renderable* spritesheet;
     // Player Camera
     olcPGEX_Camera2D camera;
+
+    // Splash screen
+    olcPGEX_SplashScreen mSplashScreen;
 
     struct mPlayer
     {
@@ -656,6 +659,8 @@ public:
 
     bool OnUserUpdate(float fElapsedTime) override
     {
+	if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
+	    return true;
         // "Panic Key" will exit game if pressed
         if (GetKey(olc::ESCAPE).bPressed)
             return false;
