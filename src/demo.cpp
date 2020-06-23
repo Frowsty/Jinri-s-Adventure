@@ -477,14 +477,15 @@ public:
     {
         if (CheckCollisions())
             return;
+
         if (p.position.x < camera.vecCamPos.x ||
             p.position.x > camera.vecCamPos.x + camera.vecCamViewSize.x ||
             p.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
-            p.position.y < camera.vecCamPos.y)
-            mProjectiles.pop_back();
-        if (std::abs(p.startPosition.x - p.position.x) > (6 * TILE_SIZE) ||
+            p.position.y < camera.vecCamPos.y ||
+            std::abs(p.startPosition.x - p.position.x) >(6 * TILE_SIZE) ||
             std::abs(p.startPosition.y - p.position.y) > (6 * TILE_SIZE))
             mProjectiles.pop_back();
+
         mProjectileCollider.position = p.position;
         if (p.direction == "idle-left" || p.direction == "walking-left")
             p.position.x -= (SPEED * 2) * GetElapsedTime();
