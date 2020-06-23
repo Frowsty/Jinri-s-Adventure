@@ -68,9 +68,8 @@ private:
     mPlayer player;
     std::string mSpriteStateName = "idle-down";
 
-    // FPS Counter
-    bool mShowFPS = false;
-    bool mDebugCollidables = false;
+    // Enable debug mode for debug information
+    bool mDebugMode = false;
 
     // Particles
     struct mParticle
@@ -85,7 +84,6 @@ private:
 
     struct mTile
     {
-        std::string layer;
         olc::vi2d position;
         olc::vi2d tilesheetPos;
     };
@@ -107,6 +105,9 @@ private:
 
     // Particle layer
     int mLayerParticle;
+
+    int mPossibleCollidables = 0;
+    int mTilesDrawnOnMap = 0;
 public:
     JinrisGame() = default;
 
@@ -119,7 +120,7 @@ public:
         // Figured it was best placed here since it's map related
         mSpriteSheet.Load("./sprites/tilesheet.png");
 
-        std::ifstream i("./sprites/jmap.json");
+        std::ifstream i("./sprites/testing.json");
         json j = json::parse(i);
 
         mMapSizeY = j.at("tileshigh");
@@ -173,7 +174,7 @@ public:
                     // Here we store all tile values into a vector of tiles
                     // The data we store is basically the position on the map where it's drawn
                     // and also the position on the tileSheet where it's stored
-                    mTiles.push_back({ layerName, olc::vi2d(x, y), olc::vi2d(tileSheetPosX, tileSheetPosY) });
+                    mTiles.push_back({ olc::vi2d(x, y), olc::vi2d(tileSheetPosX, tileSheetPosY) });
 
                     // Used for my own collisions, ignore this (Credits to Witty bits for the collision struct from the relay race)
                     if (layerName == "Colliders")
@@ -412,8 +413,13 @@ public:
 
     bool CheckCollisions()
     {
+	mPossibleCollidables = 0;
         for (auto c : mColliders)
         {
+	    // only check collision on collidables within a tile from the player
+	    if (std::abs(c->position.y - player.nY) > TILE_SIZE ||
+		std::abs(c->position.x - player.nX) > TILE_SIZE)
+		continue;
             if (CheckCollision(mPlayerCollider, *c))
             {
                 if (c->tag == "collectable")
@@ -430,6 +436,7 @@ public:
                     return true;
                 }
             }
+	    mPossibleCollidables += 1;
         }
         return false;
     }
@@ -543,16 +550,17 @@ public:
         for (int j = 0; j < x; j++)
             DrawRect((32 * j) - camera.vecCamPos.x, (32 * i) - camera.vecCamPos.y, 32, 32, olc::BLUE);
         */
-
+	mTilesDrawnOnMap = 0;
 	for (auto& tile : mTiles)
 	{
-	    if (tile.position.y + (TILE_SIZE * 2) < camera.vecCamPos.y ||
-		tile.position.y - (TILE_SIZE * 2) > camera.vecCamPos.y + camera.vecCamViewSize.y ||
-		tile.position.x + (TILE_SIZE * 2) < camera.vecCamPos.x ||
-		tile.position.x - (TILE_SIZE * 2) > camera.vecCamPos.x + camera.vecCamViewSize.x)
+	    if (tile.position.y + TILE_SIZE < camera.vecCamPos.y ||
+		tile.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
+		tile.position.x + TILE_SIZE < camera.vecCamPos.x ||
+		tile.position.x > camera.vecCamPos.x + camera.vecCamViewSize.x)
 		continue;
 	    
 	    DrawPartialDecal(tile.position - camera.vecCamPos, mSpriteSheet.Decal(), tile.tilesheetPos, { 32, 32 });
+	    mTilesDrawnOnMap += 1;
 	}
     }
 
@@ -564,12 +572,14 @@ public:
         UpdatePlayer();
 
         // Debug collidables
-        if (mDebugCollidables)
+        if (mDebugMode)
         {
             for (auto c : mColliders)
             {
                 FillRectDecal(c->position - camera.vecCamPos, c->size, olc::RED);
             }
+	    DrawStringDecal({ 1.0f, 30.0f }, "Collidables: " + std::to_string(mPossibleCollidables), olc::WHITE, { 2.0f, 2.0f });
+	    DrawStringDecal({ 1.0f, 50.0f }, "Tiles Drawn: " + std::to_string(mTilesDrawnOnMap), olc::WHITE, { 2.0f, 2.0f });
         }
     }
 
@@ -580,10 +590,8 @@ public:
             return false;
         if (GetKey(olc::BACK).bPressed && mGameState != GameState::GAME)
             mGameState = 0;
-        if (GetKey(olc::F12).bPressed)
-            mShowFPS = !mShowFPS;
         if (GetKey(olc::F11).bPressed)
-            mDebugCollidables = !mDebugCollidables;
+            mDebugMode = !mDebugMode;
         switch (mGameState)
         {
         case GameState::MENU:
@@ -609,7 +617,7 @@ public:
             break;
         }
 
-        if (mShowFPS)
+        if (mDebugMode)
             DrawStringDecal(olc::vi2d(1, 1), "FPS: " + std::to_string(GetFPS()), olc::GREEN, olc::vf2d(2.5f, 2.5f));
         return bGameRunning;
     }
