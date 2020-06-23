@@ -20,7 +20,8 @@ class JinrisGame : public olc::PixelGameEngine
 private:
     enum GameState
     {
-        MENU = 0,
+	SPLASHSCREEN = 0,
+        MENU,
         GAME,
         TUTORIAL,
         CREDITS,
@@ -45,8 +46,7 @@ private:
 
     bool bGameRunning;
     // Main menu background
-    olc::Sprite* sBackground = nullptr;
-    olc::Decal* dBackground = nullptr;
+    olc::Renderable mBackground;
 
     // Player sprite
     olc::AnimatedSprite PlayerSprite;
@@ -114,6 +114,8 @@ private:
 
     std::vector<mProjectile*> mProjectiles;
     mCollider mProjectileCollider;
+    olc::Renderable mProjectileSprite;
+    float mProjectileRotation = 0.0f;
 
     olc::Renderable mSpriteSheet;
     std::list<mTile> mTiles;
@@ -244,8 +246,7 @@ public:
         }
 
         // Create the background image for menu
-        sBackground = new olc::Sprite("./sprites/logo.png");
-        dBackground = new olc::Decal(sBackground);
+	mBackground.Load("./sprites/logo.png");
 
         // Initialize our main player along side all sprites for main player
         player = { 0, 0, false, false, 0, 0 };
@@ -270,6 +271,9 @@ public:
         // Set players default state
         PlayerSprite.SetState("idle-down");
 
+	// Load sprite for the projectile
+	mProjectileSprite.Load("./sprites/banana.png");
+
         // Set Camera position
         camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, { WINDOW_WIDTH, WINDOW_HEIGHT });
         camera.vecCamPos = { player.x, player.y };
@@ -282,8 +286,6 @@ public:
 
     void ExitGame()
     {
-        delete sBackground;
-        delete dBackground;
         delete spritesheet;
         bGameRunning = false;
     }
@@ -305,7 +307,7 @@ public:
             mSelectedItem--;
 
         if (GetKey(olc::ENTER).bPressed)
-            mGameState = mSelectedItem;
+            mGameState = mSelectedItem + 1;
     }
 
     void DrawParticles()
@@ -337,9 +339,9 @@ public:
         int iXPos = (WINDOW_WIDTH * 0.5) - (GetTextSize(mMenuTitle).x * 0.5) * 4;
         int iYPos = 10;
         DrawStringDecal(olc::vi2d(iXPos, iYPos), mMenuTitle, olc::Pixel(172, 83, 194), olc::vf2d(4.0f, 4.0f));
-        iXPos = (WINDOW_WIDTH * 0.5) - (sBackground->width * 0.5) * 4;
+        iXPos = (WINDOW_WIDTH * 0.5) - (mBackground.Sprite()->width * 0.5) * 4;
         iYPos += (GetTextSize(mMenuTitle).y * 1.5) * 4;
-        DrawDecal(olc::vi2d(iXPos, iYPos), dBackground, olc::vf2d(4.0f, 4.0f));
+        DrawDecal(olc::vi2d(iXPos, iYPos), mBackground.Decal(), olc::vf2d(4.0f, 4.0f));
     }
 
     void DrawMainMenu()
@@ -405,7 +407,7 @@ public:
         DrawStringDecal(olc::vi2d(iXPos, iYPos), "BACK", olc::Pixel(172, 83, 194), olc::vf2d(4.0f, 4.0f));
 
         if (GetKey(olc::ENTER).bPressed)
-            mGameState = 0;
+            mGameState = 1;
     }
 
     void DrawCreditsMenu()
@@ -417,7 +419,7 @@ public:
         DrawGlobalMenu();
 
         if (GetKey(olc::ENTER).bPressed)
-            mGameState = 0;
+            mGameState = 1;
     }
 
 
@@ -499,7 +501,13 @@ public:
         if (p.direction == "idle-up" || p.direction == "walking-up")
             p.position.y -= (SPEED * 2) * GetElapsedTime();
 
-        FillRectDecal(p.position - camera.vecCamPos, p.size, olc::RED);
+	if (mProjectileRotation >= 360.0f)
+	    mProjectileRotation = 0.0f;
+
+	mProjectileRotation += 20 * GetElapsedTime();
+	DrawRotatedDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal(), mProjectileRotation,
+			 { mProjectileSprite.Sprite()->width / 2.0f, mProjectileSprite.Sprite()->height / 2.0f });
+//	DrawDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal());
     }
 
     void PlayerInput()
@@ -530,10 +538,13 @@ public:
         }
         if (GetKey(olc::SPACE).bPressed && mProjectiles.size() == 0)
         {
-            mProjectiles.push_back(new mProjectile{ { player.x + 8.0f, player.y + 8.0f },
-                { player.x + 8.0f, player.y + 8.0f },
-                { 16.0f, 16.0f }, false, mSpriteStateName });
-            mProjectileCollider = { "projectile", { player.x + 8.0f, player.y + 8.0f }, { 16.0f, 16.0f } };
+            mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
+                { player.x + 16.0f , player.y + 16.0f },
+                { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) },
+		  false, mSpriteStateName });
+            mProjectileCollider = { "projectile", { player.x + 16.0f, player.y + 16.0f },
+				    { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
+	    mProjectileRotation = 0.0f;
         }
     }
 
@@ -659,17 +670,18 @@ public:
 
     bool OnUserUpdate(float fElapsedTime) override
     {
-	if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
-	    return true;
-        // "Panic Key" will exit game if pressed
+        // Panic Key
         if (GetKey(olc::ESCAPE).bPressed)
             return false;
-        if (GetKey(olc::BACK).bPressed && mGameState != GameState::GAME)
-            mGameState = 0;
         if (GetKey(olc::F11).bPressed)
             mDebugMode = !mDebugMode;
         switch (mGameState)
         {
+	case GameState::SPLASHSCREEN:
+	    if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
+		return true;
+	    mGameState += 1;
+	    break;
         case GameState::MENU:
             // Draw menu here
             DrawMainMenu();
