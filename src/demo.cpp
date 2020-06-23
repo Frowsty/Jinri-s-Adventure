@@ -86,6 +86,7 @@ private:
     {
         olc::vi2d position;
         olc::vi2d tilesheetPos;
+	bool destroyed;
     };
 
     struct mCollider
@@ -93,10 +94,23 @@ private:
         std::string tag;
         olc::vf2d position;
         olc::vf2d size;
+	mTile* tile;
     };
 
     std::vector<mCollider*> mColliders;
     mCollider mPlayerCollider;
+
+    struct mProjectile
+    {
+	olc::vf2d startPosition;
+	olc::vf2d position;
+	olc::vf2d size;
+	bool destroyed;
+	std::string direction;
+    };
+
+    std::vector<mProjectile*> mProjectiles;
+    mCollider mProjectileCollider;
 
     olc::Renderable mSpriteSheet;
     std::list<mTile> mTiles;
@@ -174,13 +188,13 @@ public:
                     // Here we store all tile values into a vector of tiles
                     // The data we store is basically the position on the map where it's drawn
                     // and also the position on the tileSheet where it's stored
-                    mTiles.push_back({ olc::vi2d(x, y), olc::vi2d(tileSheetPosX, tileSheetPosY) });
+                    mTiles.push_back({ { x, y }, { tileSheetPosX, tileSheetPosY }, false });
 
                     // Used for my own collisions, ignore this (Credits to Witty bits for the collision struct from the relay race)
                     if (layerName == "Colliders")
-                        mColliders.push_back(new mCollider{ "map_terrain", olc::vf2d(x, y), tileSize });
+			mColliders.push_back(new mCollider{ "map_terrain", { static_cast<float>(x), static_cast<float>(y) }, tileSize, &mTiles.back() });
                     if (layerName == "Collectables")
-                        mColliders.push_back(new mCollider{ "collectable", olc::vf2d(x, y), tileSize });
+                        mColliders.push_back(new mCollider{ "collectable", { static_cast<float>(x), static_cast<float>(y) }, tileSize, &mTiles.back() });
                 }
             }
         }
@@ -411,14 +425,37 @@ public:
             && left.position.y == right.position.y;
     }
 
+    bool CheckProjectileCollision(mCollider& p, mCollider& o)
+    {
+	return true
+	    && p.position.x + p.size.x >= o.position.x
+	    && p.position.x < o.position.x + o.size.x
+	    && p.position.y + p.size.y >= o.position.y
+	    && p.position.y < o.position.y + o.size.y;
+    }
+
     bool CheckCollisions()
     {
 	mPossibleCollidables = 0;
         for (auto c : mColliders)
         {
+	    // Only check collisions if there is a projectile
+	    if (mProjectiles.size() > 0)
+	    {
+		if (CheckProjectileCollision(mProjectileCollider, *c))
+		{
+		    if (c->tag == "map_terrain")
+		    {
+			c->tile->destroyed = true;
+			c->tag = "_destroyed_";
+			mProjectiles.pop_back();
+		    }
+		}
+	    }
 	    // only check collision on collidables within a tile from the player
 	    if (std::abs(c->position.y - player.nY) > TILE_SIZE ||
-		std::abs(c->position.x - player.nX) > TILE_SIZE)
+		std::abs(c->position.x - player.nX) > TILE_SIZE ||
+		c->tag == "_destroyed_")
 		continue;
             if (CheckCollision(mPlayerCollider, *c))
             {
@@ -427,18 +464,38 @@ public:
                     return true;
                 }
                 else if (c->tag == "map_terrain")
-                {
-                    /*
-                    std::cout << "Colliding with: " << c->tag << std::endl;
-                    std::cout << "Collision: " << mPlayerCollider.position.x << " : " << mPlayerCollider.position.y << std::endl;
-                    std::cout << "Collider obj: " << c->position.x << " : " << c->position.y << std::endl;
-                    */
+                {		  		    
                     return true;
                 }
             }
 	    mPossibleCollidables += 1;
         }
         return false;
+    }
+
+    void UpdateProjectile(mProjectile& p)
+    {
+	if (CheckCollisions())
+	    return;
+	if (p.position.x < camera.vecCamPos.x ||
+	    p.position.x > camera.vecCamPos.x + camera.vecCamViewSize.x ||
+	    p.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
+	    p.position.y < camera.vecCamPos.y)
+	    mProjectiles.pop_back();
+	if (std::abs(p.startPosition.x - p.position.x) > (6 * TILE_SIZE) ||
+	    std::abs(p.startPosition.y - p.position.y) > (6 * TILE_SIZE))
+	    mProjectiles.pop_back();
+	mProjectileCollider.position = p.position;
+	if (p.direction == "idle-left" || p.direction == "walking-left")
+	    p.position.x -= (SPEED * 2) * GetElapsedTime();
+	if (p.direction == "idle-right" || p.direction == "walking-right")
+	    p.position.x += (SPEED * 2) * GetElapsedTime();
+	if (p.direction == "idle-down" || p.direction == "walking-down")
+	    p.position.y += (SPEED * 2) * GetElapsedTime();
+	if (p.direction == "idle-up" || p.direction == "walking-up")
+	    p.position.y -= (SPEED * 2) * GetElapsedTime();
+
+	FillRectDecal(p.position - camera.vecCamPos, p.size, olc::RED);
     }
 
     void PlayerInput()
@@ -467,6 +524,13 @@ public:
             player.nX = player.x + TILE_SIZE;
             mSpriteStateName = "idle-right";
         }
+	if (GetKey(olc::SPACE).bPressed && mProjectiles.size() == 0)
+	{
+	    mProjectiles.push_back(new mProjectile{ { player.x + 8.0f, player.y + 8.0f },
+		    { player.x + 8.0f, player.y + 8.0f },
+		    { 16.0f, 16.0f }, false, mSpriteStateName });
+	    mProjectileCollider = { "projectile", { player.x + 8.0f, player.y + 8.0f }, { 16.0f, 16.0f } };
+	}
     }
 
     void UpdatePlayer()
@@ -478,7 +542,7 @@ public:
             {
                 if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
                 {
-                    player.x += SPEED * GetElapsedTime();;
+                    player.x += SPEED * GetElapsedTime();
                     mSpriteStateName = "walking-right";
                 }
                 if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
@@ -558,6 +622,8 @@ public:
 		tile.position.x + TILE_SIZE < camera.vecCamPos.x ||
 		tile.position.x > camera.vecCamPos.x + camera.vecCamViewSize.x)
 		continue;
+	    if (tile.destroyed)
+		continue;
 	    
 	    DrawPartialDecal(tile.position - camera.vecCamPos, mSpriteSheet.Decal(), tile.tilesheetPos, { 32, 32 });
 	    mTilesDrawnOnMap += 1;
@@ -570,12 +636,16 @@ public:
         DrawMap();
         PlayerInput();
         UpdatePlayer();
+	if (mProjectiles.size() > 0)
+	    UpdateProjectile(*mProjectiles.back());
 
         // Debug collidables
         if (mDebugMode)
         {
             for (auto c : mColliders)
             {
+		if (c->tag == "_destroyed_")
+		    continue;
                 FillRectDecal(c->position - camera.vecCamPos, c->size, olc::RED);
             }
 	    DrawStringDecal({ 1.0f, 30.0f }, "Collidables: " + std::to_string(mPossibleCollidables), olc::WHITE, { 2.0f, 2.0f });
