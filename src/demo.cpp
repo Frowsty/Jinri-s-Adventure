@@ -20,7 +20,7 @@ class JinrisGame : public olc::PixelGameEngine
 private:
     enum GameState
     {
-	SPLASHSCREEN = 0,
+        SPLASHSCREEN = 0,
         MENU,
         GAME,
         TUTORIAL,
@@ -220,7 +220,7 @@ public:
         gen = std::mt19937(rd());
         PosDistr = std::uniform_int_distribution<>(0, WINDOW_WIDTH);
         SpdDistr = std::uniform_int_distribution<>(20, 50);
-	mRandomPlayerPos = std::uniform_int_distribution<>(1, mMapSizeX);
+        mRandomPlayerPos = std::uniform_int_distribution<>(1, mMapSizeX - 1);
 
         // Setup menu options
         mMenuTitle = "JINRI'S ADVENTURE";
@@ -249,11 +249,11 @@ public:
         }
 
         // Create the background image for menu
-	mBackground.Load("./sprites/logo.png");
+        mBackground.Load("./sprites/logo.png");
 
         // Initialize our main player along side all sprites for main player
         player = { 0, 0, false, false, 0, 0 };
-        mPlayerCollider = { "player", { player.x, player.y }, { 32.0f, 32.0f } };
+        mPlayerCollider = { "player", { player.x, player.y }, { static_cast<float>(TILE_SIZE), static_cast<float>(TILE_SIZE) } };
         PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
         PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
         spritesheet = new olc::Renderable();
@@ -274,8 +274,8 @@ public:
         // Set players default state
         PlayerSprite.SetState("idle-down");
 
-	// Load sprite for the projectile
-	mProjectileSprite.Load("./sprites/banana.png");
+        // Load sprite for the projectile
+        mProjectileSprite.Load("./sprites/banana.png");
 
         // Set Camera position
         camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, { WINDOW_WIDTH, WINDOW_HEIGHT });
@@ -504,13 +504,13 @@ public:
         if (p.direction == "idle-up" || p.direction == "walking-up")
             p.position.y -= (SPEED * 2) * GetElapsedTime();
 
-	if (mProjectileRotation >= 360.0f)
-	    mProjectileRotation = 0.0f;
+        if (mProjectileRotation >= 360.0f)
+            mProjectileRotation = 0.0f;
 
-	mProjectileRotation += 20 * GetElapsedTime();
-	DrawRotatedDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal(), mProjectileRotation,
-			 { mProjectileSprite.Sprite()->width / 2.0f, mProjectileSprite.Sprite()->height / 2.0f });
-//	DrawDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal());
+        mProjectileRotation += 20 * GetElapsedTime();
+        DrawRotatedDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal(), mProjectileRotation,
+            { mProjectileSprite.Sprite()->width / 2.0f, mProjectileSprite.Sprite()->height / 2.0f });
+        //	DrawDecal(p.position - camera.vecCamPos, mProjectileSprite.Decal());
     }
 
     void PlayerInput()
@@ -544,10 +544,10 @@ public:
             mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
                 { player.x + 16.0f , player.y + 16.0f },
                 { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) },
-		  false, mSpriteStateName });
+          false, mSpriteStateName });
             mProjectileCollider = { "projectile", { player.x + 16.0f, player.y + 16.0f },
-				    { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
-	    mProjectileRotation = 0.0f;
+                    { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
+            mProjectileRotation = 0.0f;
         }
     }
 
@@ -619,32 +619,35 @@ public:
         }
         camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, { static_cast<float>(mMapSizeX * TILE_SIZE), static_cast<float>(mMapSizeY * TILE_SIZE) },
             (olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
-        camera.ClampCamera({ 0, 0 }, { static_cast<float>(mMapSizeX * TILE_SIZE), static_cast<float>(mMapSizeY * TILE_SIZE) });
+        camera.ClampCamera({ 0, 0 }, { static_cast<float>(mMapSizeX* TILE_SIZE), static_cast<float>(mMapSizeY* TILE_SIZE) });
         PlayerSprite.SetState(mSpriteStateName);
         PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
     }
 
     void SpawnPlayer()
     {
-	float tempX = mRandomPlayerPos(gen) * TILE_SIZE;
-	float tempY = mRandomPlayerPos(gen) * TILE_SIZE;
-	bool shouldSpawn = false;
-	for (auto c : mColliders)
-	{
-	    if (tempX == c->position.x || tempY == c->position.y)
-	    {
-		tempX = mRandomPlayerPos(gen);
-		tempY = mRandomPlayerPos(gen);
-		continue;
-	    }
-	    if (!shouldSpawn)
-		shouldSpawn = true;
-	    continue;
-	}
-	player.x = tempX;
-	player.y = tempY;
-	std::cout << "Spawned at: " << player.x << " : " << player.y << std::endl;
-	mSpawnPlayer = false;
+        float tempX = mRandomPlayerPos(gen) * TILE_SIZE;
+        float tempY = mRandomPlayerPos(gen) * TILE_SIZE;
+        bool shouldSpawn = false;
+        for (auto c : mColliders)
+        {
+            if (tempX == c->position.x || tempY == c->position.y)
+            {
+                tempX = mRandomPlayerPos(gen);
+                tempY = mRandomPlayerPos(gen);
+                continue;
+            }
+            if (!shouldSpawn)
+                shouldSpawn = true;
+            continue;
+        }
+        if (fmod(tempX, static_cast<float>(TILE_SIZE)) == 0 && fmod(tempY, static_cast<float>(TILE_SIZE)) == 0)
+        {
+            player.x = tempX;
+            player.y = tempY;
+            std::cout << "Spawned at: " << player.x << " : " << player.y << std::endl;
+            mSpawnPlayer = false;
+        }
     }
 
     void DrawMap()
@@ -652,8 +655,8 @@ public:
         mTilesDrawnOnMap = 0;
         for (auto& tile : mTiles)
         {
-	    // Set rendering bounds, if tile that is suppose to be rendered is not within the viewport
-	    // Or if the tile is destroyed we shall not render it.
+            // Set rendering bounds, if tile that is suppose to be rendered is not within the viewport
+            // Or if the tile is destroyed we shall not render it.
             if (tile.position.y + TILE_SIZE < camera.vecCamPos.y ||
                 tile.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
                 tile.position.x + TILE_SIZE < camera.vecCamPos.x ||
@@ -669,8 +672,8 @@ public:
 
     void RunGame()
     {
-	if (mSpawnPlayer)
-	    SpawnPlayer();
+        if (mSpawnPlayer)
+            SpawnPlayer();
         DrawMap();
         PlayerInput();
         UpdatePlayer();
@@ -698,15 +701,15 @@ public:
             return false;
         if (GetKey(olc::F11).bPressed)
             mDebugMode = !mDebugMode;
-	if (GetKey(olc::F2).bPressed)
-	    mSpawnPlayer = true;
+        if (GetKey(olc::F2).bHeld)
+            mSpawnPlayer = true;
         switch (mGameState)
         {
-	case GameState::SPLASHSCREEN:
-	    if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
-		return true;
-	    mGameState += 1;
-	    break;
+        case GameState::SPLASHSCREEN:
+            if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
+                return true;
+            mGameState += 1;
+            break;
         case GameState::MENU:
             // Draw menu here
             DrawMainMenu();
