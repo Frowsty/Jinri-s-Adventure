@@ -43,6 +43,7 @@ private:
     std::mt19937 gen;
     std::uniform_int_distribution<> PosDistr;
     std::uniform_int_distribution<> SpdDistr;
+    std::uniform_int_distribution<> mRandomPlayerPos;
 
     bool bGameRunning;
     // Main menu background
@@ -70,6 +71,7 @@ private:
     // Create a player instance
     mPlayer player;
     std::string mSpriteStateName = "idle-down";
+    bool mSpawnPlayer = true;
 
     // Enable debug mode for debug information
     bool mDebugMode = false;
@@ -218,6 +220,7 @@ public:
         gen = std::mt19937(rd());
         PosDistr = std::uniform_int_distribution<>(0, WINDOW_WIDTH);
         SpdDistr = std::uniform_int_distribution<>(20, 50);
+	mRandomPlayerPos = std::uniform_int_distribution<>(1, mMapSizeX);
 
         // Setup menu options
         mMenuTitle = "JINRI'S ADVENTURE";
@@ -536,7 +539,7 @@ public:
             player.nX = player.x + TILE_SIZE;
             mSpriteStateName = "idle-right";
         }
-        if (GetKey(olc::SPACE).bPressed && mProjectiles.size() == 0)
+        if ((GetKey(olc::SPACE).bPressed || GetKey(olc::SPACE).bHeld) && mProjectiles.size() == 0)
         {
             mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
                 { player.x + 16.0f , player.y + 16.0f },
@@ -551,9 +554,10 @@ public:
     void UpdatePlayer()
     {
         mPlayerCollider.position = { player.nX, player.nY };
+
         if (player.walkingX)
         {
-            if (!CheckCollisions() && player.nX < (mMapSizeX * 32) && player.nX > -32)
+            if (!CheckCollisions() && player.nX < (mMapSizeX * TILE_SIZE) && player.nX > -TILE_SIZE)
             {
                 if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
                 {
@@ -584,7 +588,7 @@ public:
         }
         if (player.walkingY)
         {
-            if (!CheckCollisions() && player.nY < (mMapSizeY * 32) && player.nY > -32)
+            if (!CheckCollisions() && player.nY < (mMapSizeY * TILE_SIZE) && player.nY > -TILE_SIZE)
             {
                 if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
                 {
@@ -613,25 +617,43 @@ public:
                 player.nY = player.y;
             }
         }
-        camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, { WINDOW_WIDTH * 2, WINDOW_HEIGHT * 2 },
+        camera.vecCamPos = camera.LerpCamera(camera.ClampVector({ 0, 0 }, { static_cast<float>(mMapSizeX * TILE_SIZE), static_cast<float>(mMapSizeY * TILE_SIZE) },
             (olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5f)), 15.0f);
-        camera.ClampCamera({ 0, 0 }, { mMapSizeX * 32.0f, mMapSizeY * 32.0f });
+        camera.ClampCamera({ 0, 0 }, { static_cast<float>(mMapSizeX * TILE_SIZE), static_cast<float>(mMapSizeY * TILE_SIZE) });
         PlayerSprite.SetState(mSpriteStateName);
         PlayerSprite.Draw(GetElapsedTime(), olc::vf2d(player.x, player.y) - camera.vecCamPos);
     }
 
+    void SpawnPlayer()
+    {
+	float tempX = mRandomPlayerPos(gen) * TILE_SIZE;
+	float tempY = mRandomPlayerPos(gen) * TILE_SIZE;
+	bool shouldSpawn = false;
+	for (auto c : mColliders)
+	{
+	    if (tempX == c->position.x || tempY == c->position.y)
+	    {
+		tempX = mRandomPlayerPos(gen);
+		tempY = mRandomPlayerPos(gen);
+		continue;
+	    }
+	    if (!shouldSpawn)
+		shouldSpawn = true;
+	    continue;
+	}
+	player.x = tempX;
+	player.y = tempY;
+	std::cout << "Spawned at: " << player.x << " : " << player.y << std::endl;
+	mSpawnPlayer = false;
+    }
+
     void DrawMap()
     {
-        /*
-        int y = mMapSizeY;
-        int x = mMapSizeX;
-        for (int i = 0; i < y; i++)
-        for (int j = 0; j < x; j++)
-            DrawRect((32 * j) - camera.vecCamPos.x, (32 * i) - camera.vecCamPos.y, 32, 32, olc::BLUE);
-        */
         mTilesDrawnOnMap = 0;
         for (auto& tile : mTiles)
         {
+	    // Set rendering bounds, if tile that is suppose to be rendered is not within the viewport
+	    // Or if the tile is destroyed we shall not render it.
             if (tile.position.y + TILE_SIZE < camera.vecCamPos.y ||
                 tile.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
                 tile.position.x + TILE_SIZE < camera.vecCamPos.x ||
@@ -647,7 +669,8 @@ public:
 
     void RunGame()
     {
-        // Call player input function (includes movement and other
+	if (mSpawnPlayer)
+	    SpawnPlayer();
         DrawMap();
         PlayerInput();
         UpdatePlayer();
@@ -675,6 +698,8 @@ public:
             return false;
         if (GetKey(olc::F11).bPressed)
             mDebugMode = !mDebugMode;
+	if (GetKey(olc::F2).bPressed)
+	    mSpawnPlayer = true;
         switch (mGameState)
         {
 	case GameState::SPLASHSCREEN:
