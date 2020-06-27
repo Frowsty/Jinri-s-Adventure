@@ -4,13 +4,12 @@
 #include "olcPGEX_AnimatedSprite.h"
 #include "olcPGEX_Camera2D.h"
 #include "olcPGEX_SplashScreen.h"
-#include <stdint.h>
 #include <random>
 #include "json.hpp"
 
 using json = nlohmann::json;
 
-#define WINDOW_HEIGHT 800
+#define WINDOW_HEIGHT 832
 #define WINDOW_WIDTH 1024
 #define M_PI 3.14159
 #define TILE_SIZE 32
@@ -64,14 +63,16 @@ private:
         float y;
         bool  walkingX;
         bool  walkingY;
-        float nX;
-        float nY;
+        int nX;
+        int nY;
     };
 
     // Create a player instance
     mPlayer player;
     std::string mSpriteStateName = "idle-down";
     bool mSpawnPlayer = true;
+    int mStoredPlayerX;
+    int mStoredPlayerY;
 
     // Enable debug mode for debug information
     bool mDebugMode = false;
@@ -129,6 +130,24 @@ private:
 
     int mPossibleCollidables = 0;
     int mTilesDrawnOnMap = 0;
+
+    bool* mObstacleMap;
+    int* mFlowFieldZ;
+
+    struct mMonster
+    {
+	olc::vf2d position;
+	olc::vi2d nPosition;
+	int health;
+	olc::vi2d startPos;
+	olc::vi2d endPos;
+	std::list<std::pair<int, int>> path;
+    };
+
+    std::vector<mMonster*> mMonsters;
+
+    float mTimer = 0.0f;
+    
 public:
     JinrisGame() = default;
 
@@ -207,6 +226,27 @@ public:
         }
     }
 
+    void ReloadObstacleMap()
+    {
+	auto p = [&](int x, int y) { return y * mMapSizeX + x; };
+	for (int x = 0; x < mMapSizeX; x++)
+	{
+	    for (int y = 0; y < mMapSizeY; y++)
+	    {
+		mObstacleMap[p(x, y)] = false;
+		for (auto c : mColliders)
+		{
+		    if (c->position.x / TILE_SIZE == x && c->position.y / TILE_SIZE == y && c->tag != "_destroyed_")
+			mObstacleMap[p(x, y)] = true;
+		}
+		if (x == 0 || y == 0 || x == mMapSizeX || y == mMapSizeY || mObstacleMap[p(x, y)])
+		    mFlowFieldZ[p(x, y)] = -1;
+		else
+		    mFlowFieldZ[p(x, y)] = 0;
+	    }
+	}
+    }
+
     bool OnUserCreate() override
     {
         // Set window title
@@ -215,6 +255,11 @@ public:
         bGameRunning = true;
 
         LoadMap();
+
+	// Init obstacle and flowmap
+	mObstacleMap = new bool[mMapSizeX * mMapSizeY] { false };
+	mFlowFieldZ = new int[mMapSizeX * mMapSizeY] { 0 };
+	ReloadObstacleMap();
 
         // Initialize Random generator
         gen = std::mt19937(rd());
@@ -277,8 +322,14 @@ public:
         // Load sprite for the projectile
         mProjectileSprite.Load("./sprites/banana.png");
 
+	// Create Monsters
+	for (int i = 0; i < 10; i++)
+	{
+	    mMonsters.push_back(new mMonster{ { SpdDistr(gen), SpdDistr(gen) }, { 5, 5 }, 100, { 1, 1 }, { 5, 5 } });
+	}
+
         // Set Camera position
-        camera.InitialiseCamera(olc::vf2d(player.x, player.y) - camera.vecCamViewSize * 0.5, { WINDOW_WIDTH, WINDOW_HEIGHT });
+        camera.InitialiseCamera(olc::vf2d(player.x, player.y) - (camera.vecCamViewSize * 0.5), { WINDOW_WIDTH, WINDOW_HEIGHT });
         camera.vecCamPos = { player.x, player.y };
 
         // Create all of our layers
@@ -290,6 +341,8 @@ public:
     void ExitGame()
     {
         delete spritesheet;
+	delete mObstacleMap;
+	delete mFlowFieldZ;
         bGameRunning = false;
     }
 
@@ -543,17 +596,16 @@ public:
         {
             mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
                 { player.x + 16.0f , player.y + 16.0f },
-                { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) },
-          false, mSpriteStateName });
+                { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) }, false, mSpriteStateName });
             mProjectileCollider = { "projectile", { player.x + 16.0f, player.y + 16.0f },
-                    { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
+                { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
             mProjectileRotation = 0.0f;
         }
     }
 
     void UpdatePlayer()
     {
-        mPlayerCollider.position = { player.nX, player.nY };
+        mPlayerCollider.position = { static_cast<float>(player.nX), static_cast<float>(player.nY) };
 
         if (player.walkingX)
         {
@@ -643,11 +695,171 @@ public:
         }
         if (fmod(tempX, static_cast<float>(TILE_SIZE)) == 0 && fmod(tempY, static_cast<float>(TILE_SIZE)) == 0)
         {
-            player.x = tempX;
-            player.y = tempY;
+            player.x = 15 * 32;
+            player.y = 15 * 32;
             std::cout << "Spawned at: " << player.x << " : " << player.y << std::endl;
             mSpawnPlayer = false;
         }
+    }
+
+    void FindPath(mMonster* monster)
+    {
+	ReloadObstacleMap();
+	auto p = [&](int x, int y) { return y * mMapSizeX + x; };
+	std::list<std::tuple<int, int, int>> nodes;
+	nodes.push_back({ monster->endPos.x, monster->endPos.y, 1 });
+
+	while (!nodes.empty())
+	{
+	    std::list<std::tuple<int, int, int>> newNodes;
+
+	    for (auto& n: nodes)
+	    {
+		int x = std::get<0>(n);
+		int y = std::get<1>(n);
+		int d = std::get<2>(n);
+
+		mFlowFieldZ[p(x, y)] = d;
+
+		if ((x + 1) < mMapSizeX && mFlowFieldZ[p(x + 1, y)] == 0)
+		    newNodes.push_back({ x + 1, y, d + 1});
+		if ((x - 1) >= 0 && mFlowFieldZ[p(x - 1, y)] == 0)
+		    newNodes.push_back({ x - 1, y, d + 1 });
+		if ((y + 1) < mMapSizeY && mFlowFieldZ[p(x, y + 1)] == 0)
+		    newNodes.push_back({ x, y + 1, d + 1});
+		if ((y - 1) >= 0 && mFlowFieldZ[p(x, y - 1)] == 0)
+		    newNodes.push_back({ x, y - 1, d + 1 });
+		
+	    }
+
+	    newNodes.sort([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
+			  {
+			      return p(std::get<0>(n1), std::get<1>(n1)) < p(std::get<0>(n2), std::get<1>(n2));
+			  });
+	    newNodes.unique([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
+			    {
+				return p(std::get<0>(n1), std::get<1>(n1)) == p(std::get<0>(n2), std::get<1>(n2));
+			    });
+
+	    nodes.clear();
+	    nodes.insert(nodes.begin(), newNodes.begin(), newNodes.end());
+	}
+
+	std::list<std::pair<int, int>> path;
+	int locX = monster->startPos.x;
+	int locY = monster->startPos.y;
+	bool noPath = false;
+
+	while(!(locX == monster->endPos.x && locY == monster->endPos.y) && !noPath)
+	{
+	    std::list<std::tuple<int, int, int>> listNeighbours;
+
+	    // 4-Way Connectivity
+	    if ((locY - 1) >= 0 && mFlowFieldZ[p(locX, locY - 1)] > 0)
+		listNeighbours.push_back({ locX, locY - 1, mFlowFieldZ[p(locX, locY - 1)] });
+	    if ((locX + 1) < mMapSizeX && mFlowFieldZ[p(locX + 1, locY)] > 0)
+		listNeighbours.push_back({ locX + 1, locY, mFlowFieldZ[p(locX + 1, locY)] });
+	    if ((locY + 1) < mMapSizeY && mFlowFieldZ[p(locX, locY + 1)] > 0)
+		listNeighbours.push_back({ locX, locY + 1, mFlowFieldZ[p(locX, locY + 1)] });
+	    if ((locX - 1) >= 0 && mFlowFieldZ[p(locX - 1, locY)] > 0)
+		listNeighbours.push_back({ locX - 1, locY, mFlowFieldZ[p(locX - 1, locY)] });
+
+	    listNeighbours.sort([&](const std::tuple<int, int, int> &n1, const std::tuple<int, int, int> &n2)
+				{
+				    return std::get<2>(n1) < std::get<2>(n2);
+				});
+
+	    if (listNeighbours.empty())
+		noPath = true;
+	    else
+	    {
+		locX = std::get<0>(listNeighbours.front());
+		locY = std::get<1>(listNeighbours.front());
+		path.push_back({ locX, locY });
+	    }
+	}
+	path.pop_back();
+	monster->path = path;
+    }
+
+    void MonsterMovement(mMonster* monster)
+    {
+	bool walkingX = false;
+	bool walkingY = false;
+
+	if (monster->path.size() > 0)
+	{
+	    monster->nPosition = { monster->path.front().first, monster->path.front().second };
+
+	    if (monster->nPosition.x != monster->position.x)
+		walkingX = true;
+	    if (monster->nPosition.y != monster->position.y && !walkingX)
+		walkingY = true;
+
+	    if (walkingX)
+	    {
+		if (monster->position.x - monster->nPosition.x < 0)
+		    monster->position.x += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
+		if (monster->position.x - monster->nPosition.x > 0)
+		    monster->position.x -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
+
+		if (std::abs((monster->position.x * TILE_SIZE) - (monster->nPosition.x * TILE_SIZE)) < 1 ||
+		    std::abs((monster->position.x * TILE_SIZE) - (monster->nPosition.x * TILE_SIZE)) > 32)
+		{
+		    std::cout << "removing path cuz of Y" << std::endl;
+		    monster->position.x = monster->nPosition.x;
+		    monster->path.pop_front();
+		}
+	    }
+
+	    if (walkingY)
+	    {
+		if (monster->position.y - monster->nPosition.y < 0)
+		    monster->position.y += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
+		if (monster->position.y - monster->nPosition.y > 0)
+		    monster->position.y -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
+
+		if (std::abs((monster->position.y * TILE_SIZE) - (monster->nPosition.y * TILE_SIZE)) < 1 ||
+		    std::abs((monster->position.y * TILE_SIZE) - (monster->nPosition.y * TILE_SIZE)) > 32)
+		{
+		    std::cout << "removing path cuz of Y" << std::endl;
+		    monster->position.y = monster->nPosition.y;
+		    monster->path.pop_front();
+		}
+	    }
+	}
+    }
+
+    void DrawMonsters()
+    {
+	auto p = [&](int x, int y) { return y * mMapSizeX + x; };
+	mTimer += GetElapsedTime();
+	for (auto monster : mMonsters)
+	{
+	    FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::WHITE);
+	    if (std::abs(player.x / TILE_SIZE - monster->position.x) < 10 &&
+		std::abs(player.y / TILE_SIZE - monster->position.y) < 10 &&
+		(mStoredPlayerX != player.x || mStoredPlayerY != player.y) &&
+		std::abs(mTimer - GetElapsedTime()) > 0.5f)
+	    {
+		monster->path.clear();
+		monster->startPos = { static_cast<int>(monster->position.x), static_cast<int>(monster->position.y) };
+		monster->endPos = { static_cast<int>(player.x / TILE_SIZE), static_cast<int>(player.y / TILE_SIZE) };
+		FindPath(monster);
+		mStoredPlayerX = player.x;
+		mStoredPlayerY = player.y;
+		mTimer = 0.0f;		    
+	    }
+	    
+	    for (auto& coordinate : monster->path)
+	    {
+		FillRectDecal({ static_cast<float>(coordinate.first * TILE_SIZE - camera.vecCamPos.x),
+			   static_cast<float>(coordinate.second * TILE_SIZE - camera.vecCamPos.y) },
+			   { TILE_SIZE - 10, TILE_SIZE - 10 }, olc::WHITE);
+	    }
+
+	    MonsterMovement(monster);
+	}
     }
 
     void DrawMap()
@@ -670,11 +882,24 @@ public:
         }
     }
 
+    void RespawnColliders()
+    {
+	for (auto c : mColliders)
+	{
+	    if (c->tag == "_destroyed_")
+	    {
+		c->tag = "map_terrain";
+		c->tile->destroyed = false;
+	    }
+
+	}
+    }
+
     void RunGame()
     {
         if (mSpawnPlayer)
             SpawnPlayer();
-        DrawMap();
+	DrawMap();
         PlayerInput();
         UpdatePlayer();
         if (mProjectiles.size() > 0)
@@ -692,6 +917,7 @@ public:
             DrawStringDecal({ 1.0f, 30.0f }, "Collidables: " + std::to_string(mPossibleCollidables), olc::WHITE, { 2.0f, 2.0f });
             DrawStringDecal({ 1.0f, 50.0f }, "Tiles Drawn: " + std::to_string(mTilesDrawnOnMap), olc::WHITE, { 2.0f, 2.0f });
         }
+	DrawMonsters();
     }
 
     bool OnUserUpdate(float fElapsedTime) override
@@ -701,8 +927,10 @@ public:
             return false;
         if (GetKey(olc::F11).bPressed)
             mDebugMode = !mDebugMode;
-        if (GetKey(olc::F2).bHeld)
+        if (GetKey(olc::F2).bPressed)
             mSpawnPlayer = true;
+	if (GetKey(olc::F3).bPressed)
+	    RespawnColliders();
         switch (mGameState)
         {
         case GameState::SPLASHSCREEN:
