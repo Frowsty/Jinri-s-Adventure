@@ -142,9 +142,12 @@ private:
 	olc::vi2d startPos;
 	olc::vi2d endPos;
 	std::list<std::pair<int, int>> path;
+	mCollider* collider;
     };
 
     std::vector<mMonster*> mMonsters;
+    int monsterTempX = 0;
+    int monsterTempY = 0;
 
     float mTimer = 0.0f;
     
@@ -325,7 +328,10 @@ public:
 	// Create Monsters
 	for (int i = 0; i < 10; i++)
 	{
-	    mMonsters.push_back(new mMonster{ { SpdDistr(gen), SpdDistr(gen) }, { 5, 5 }, 100, { 1, 1 }, { 5, 5 } });
+	    float x = SpdDistr(gen);
+	    float y = SpdDistr(gen);
+	    mColliders.push_back(new mCollider{ "monster", { x, y }, { TILE_SIZE, TILE_SIZE } });
+	    mMonsters.push_back(new mMonster{ { x, y }, { (int)x, (int)y }, 100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
 	}
 
         // Set Camera position
@@ -528,6 +534,10 @@ public:
                 {
                     return true;
                 }
+		else if(c->tag == "monster")
+		{
+		    return true;
+		}
             }
             mPossibleCollidables += 1;
         }
@@ -697,6 +707,8 @@ public:
         {
             player.x = 15 * 32;
             player.y = 15 * 32;
+	    player.nX = player.x;
+	    player.nY = player.y;
             std::cout << "Spawned at: " << player.x << " : " << player.y << std::endl;
             mSpawnPlayer = false;
         }
@@ -778,7 +790,8 @@ public:
 		path.push_back({ locX, locY });
 	    }
 	}
-	path.pop_back();
+	if (path.size() > 0)
+	    path.pop_back();
 	monster->path = path;
     }
 
@@ -791,22 +804,25 @@ public:
 	{
 	    monster->nPosition = { monster->path.front().first, monster->path.front().second };
 
-	    if (monster->nPosition.x != monster->position.x)
+	    if (monster->position.x != monster->nPosition.x && monster->position.y == monster->nPosition.y)
 		walkingX = true;
-	    if (monster->nPosition.y != monster->position.y && !walkingX)
+	    else
 		walkingY = true;
+	    if (monster->position.y != monster->nPosition.y && monster->position.x == monster->nPosition.x && !walkingX)
+		walkingY = true;
+	    else
+		walkingX = true;
 
 	    if (walkingX)
 	    {
 		if (monster->position.x - monster->nPosition.x < 0)
 		    monster->position.x += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
 		if (monster->position.x - monster->nPosition.x > 0)
-		    monster->position.x -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
-
-		if (std::abs((monster->position.x * TILE_SIZE) - (monster->nPosition.x * TILE_SIZE)) < 1 ||
-		    std::abs((monster->position.x * TILE_SIZE) - (monster->nPosition.x * TILE_SIZE)) > 32)
+		    monster->position.x -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;	       
+		
+		if (std::abs(monster->position.x - monster->nPosition.x) < 0.1)
 		{
-		    std::cout << "removing path cuz of Y" << std::endl;
+		    std::cout << "removing path cuz of X" << std::endl;
 		    monster->position.x = monster->nPosition.x;
 		    monster->path.pop_front();
 		}
@@ -817,16 +833,17 @@ public:
 		if (monster->position.y - monster->nPosition.y < 0)
 		    monster->position.y += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
 		if (monster->position.y - monster->nPosition.y > 0)
-		    monster->position.y -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
+		    monster->position.y -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;	       
 
-		if (std::abs((monster->position.y * TILE_SIZE) - (monster->nPosition.y * TILE_SIZE)) < 1 ||
-		    std::abs((monster->position.y * TILE_SIZE) - (monster->nPosition.y * TILE_SIZE)) > 32)
+		if(std::abs(monster->position.y - monster->nPosition.y) < 0.1)
 		{
 		    std::cout << "removing path cuz of Y" << std::endl;
 		    monster->position.y = monster->nPosition.y;
 		    monster->path.pop_front();
 		}
 	    }
+//	    std::cout << monster->position.x << " : " << monster->position.y << std::endl;
+	    std::cout << monster->position.x << " :  " << monster->nPosition.y << std::endl;
 	}
     }
 
@@ -836,15 +853,33 @@ public:
 	mTimer += GetElapsedTime();
 	for (auto monster : mMonsters)
 	{
-	    FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::WHITE);
+	    FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
 	    if (std::abs(player.x / TILE_SIZE - monster->position.x) < 10 &&
 		std::abs(player.y / TILE_SIZE - monster->position.y) < 10 &&
-		(mStoredPlayerX != player.x || mStoredPlayerY != player.y) &&
-		std::abs(mTimer - GetElapsedTime()) > 0.5f)
+		(mStoredPlayerX != player.x || mStoredPlayerY != player.y))
 	    {
 		monster->path.clear();
-		monster->startPos = { static_cast<int>(monster->position.x), static_cast<int>(monster->position.y) };
-		monster->endPos = { static_cast<int>(player.x / TILE_SIZE), static_cast<int>(player.y / TILE_SIZE) };
+		monsterTempX = 0;
+		monsterTempY = 0;
+		
+		if (monster->position.x - static_cast<int>(monster->position.x) > 0.5f)
+		    monsterTempX = std::ceil(monster->position.x);
+		else if (monster->position.x - static_cast<int>(monster->position.x) < 0.5f &&
+			 monster->position.x - static_cast<int>(monster->position.x) > 0.0f)
+		    monsterTempX = std::floor(monster->position.x);
+		else
+		    monsterTempX = monster->position.x;
+		
+		if (monster->position.y - static_cast<int>(monster->position.y) > 0.5f)
+		    monsterTempY = std::ceil(monster->position.y);
+		else if (monster->position.y - static_cast<int>(monster->position.y) < 0.5f &&
+			 monster->position.y - static_cast<int>(monster->position.y) > 0.0f)
+		    monsterTempY = std::floor(monster->position.y);
+		else
+		    monsterTempY = monster->position.y;
+		
+		monster->startPos = { monsterTempX , monsterTempY };
+		monster->endPos = { player.nX / TILE_SIZE, player.nY / TILE_SIZE };
 		FindPath(monster);
 		mStoredPlayerX = player.x;
 		mStoredPlayerY = player.y;
@@ -853,9 +888,9 @@ public:
 	    
 	    for (auto& coordinate : monster->path)
 	    {
-		FillRectDecal({ static_cast<float>(coordinate.first * TILE_SIZE - camera.vecCamPos.x),
-			   static_cast<float>(coordinate.second * TILE_SIZE - camera.vecCamPos.y) },
-			   { TILE_SIZE - 10, TILE_SIZE - 10 }, olc::WHITE);
+		FillRectDecal({ static_cast<float>(coordinate.first * TILE_SIZE - camera.vecCamPos.x) + 2,
+			   static_cast<float>(coordinate.second * TILE_SIZE - camera.vecCamPos.y) + 2 },
+			   { TILE_SIZE - 4, TILE_SIZE - 4 }, olc::WHITE);
 	    }
 
 	    MonsterMovement(monster);
@@ -904,7 +939,7 @@ public:
         UpdatePlayer();
         if (mProjectiles.size() > 0)
             UpdateProjectile(*mProjectiles.back());
-
+	DrawMonsters();
         // Debug collidables
         if (mDebugMode)
         {
@@ -917,7 +952,6 @@ public:
             DrawStringDecal({ 1.0f, 30.0f }, "Collidables: " + std::to_string(mPossibleCollidables), olc::WHITE, { 2.0f, 2.0f });
             DrawStringDecal({ 1.0f, 50.0f }, "Tiles Drawn: " + std::to_string(mTilesDrawnOnMap), olc::WHITE, { 2.0f, 2.0f });
         }
-	DrawMonsters();
     }
 
     bool OnUserUpdate(float fElapsedTime) override
