@@ -14,6 +14,7 @@ using json = nlohmann::json;
 #define M_PI 3.14159
 #define TILE_SIZE 32
 #define SPEED 150
+#define FOV 15
 class JinrisGame : public olc::PixelGameEngine
 {
 private:
@@ -122,7 +123,7 @@ private:
     float mProjectileRotation = 0.0f;
 
     olc::Renderable mSpriteSheet;
-    std::list<mTile> mTiles;
+    std::list<mTile*> mTiles;
     int mMapSizeX;
     int mMapSizeY;
 
@@ -139,6 +140,7 @@ private:
     {
         olc::vf2d position;
         olc::vi2d nPosition;
+        olc::vi2d oPosition;
         int health;
         olc::vi2d startPos;
         olc::vi2d endPos;
@@ -217,32 +219,49 @@ public:
                     // Here we store all tile values into a vector of tiles
                     // The data we store is basically the position on the map where it's drawn
                     // and also the position on the tileSheet where it's stored
-                    mTiles.push_back({ { x, y }, { tileSheetPosX, tileSheetPosY }, false });
+                    mTiles.push_back(new mTile{ { x, y }, { tileSheetPosX, tileSheetPosY }, false });
 
                     // Used for my own collisions, ignore this (Credits to Witty bits for the collision struct from the relay race)
                     if (layerName == "Colliders")
-                        mColliders.push_back(new mCollider{ "map_terrain", { static_cast<float>(x), static_cast<float>(y) }, tileSize,& mTiles.back() });
+                        mColliders.push_back(new mCollider{ "map_terrain", { static_cast<float>(x), static_cast<float>(y) }, tileSize, mTiles.back() });
                     if (layerName == "Collectables")
-                        mColliders.push_back(new mCollider{ "collectable", { static_cast<float>(x), static_cast<float>(y) }, tileSize,& mTiles.back() });
+                        mColliders.push_back(new mCollider{ "collectable", { static_cast<float>(x), static_cast<float>(y) }, tileSize, mTiles.back() });
                 }
             }
         }
     }
 
-    void ReloadObstacleMap()
+    void ReloadObstacleMap(mMonster* monster)
     {
         auto p = [&](int x, int y) { return y * mMapSizeX + x; };
-        for (int x = 0; x < mMapSizeX; x++)
+        int minFOV = monster->position.x - FOV;
+        int maxFOV = monster->position.x + FOV;
+        if (minFOV < 0)
+            minFOV = 0;
+        if (maxFOV > mMapSizeX)
+            maxFOV = mMapSizeX;
+        for (int x = minFOV; x < maxFOV; x++)
         {
-            for (int y = 0; y < mMapSizeY; y++)
+            for (int y = minFOV; y < maxFOV; y++)
             {
                 mObstacleMap[p(x, y)] = false;
-                for (auto c : mColliders)
+                for (auto* c : mColliders)
                 {
                     if (c->position.x / TILE_SIZE == x && c->position.y / TILE_SIZE == y && c->tag != "_destroyed_")
                         mObstacleMap[p(x, y)] = true;
                 }
-                if (x == 0 || y == 0 || x == mMapSizeX || y == mMapSizeY || mObstacleMap[p(x, y)])
+                for (auto* m : mMonsters)
+                {
+                    if (!m->path.empty())
+                    {
+                        for (auto& cord : m->path)
+                        {
+                            if (cord.first == x && cord.second == y)
+                                mObstacleMap[p(cord.first, cord.second)] = true;
+                        }
+                    }
+                }
+                if (mObstacleMap[p(x, y)])
                     mFlowFieldZ[p(x, y)] = -1;
                 else
                     mFlowFieldZ[p(x, y)] = 0;
@@ -262,7 +281,6 @@ public:
         // Init obstacle and flowmap
         mObstacleMap = new bool[mMapSizeX * mMapSizeY]{ false };
         mFlowFieldZ = new int[mMapSizeX * mMapSizeY]{ 0 };
-        ReloadObstacleMap();
 
         // Initialize Random generator
         gen = std::mt19937(rd());
@@ -331,7 +349,8 @@ public:
             float x = SpdDistr(gen);
             float y = SpdDistr(gen);
             mColliders.push_back(new mCollider{ "monster", { x, y }, { TILE_SIZE, TILE_SIZE } });
-            mMonsters.push_back(new mMonster{ { x, y }, { static_cast<int>(x), static_cast<int>(y) }, 100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
+            mMonsters.push_back(new mMonster{ { x, y }, { static_cast<int>(x), static_cast<int>(y) }, { static_cast<int>(x), static_cast<int>(y) },
+                                                      100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
         }
 
         // Set Camera position
@@ -347,8 +366,8 @@ public:
     void ExitGame()
     {
         delete spritesheet;
-        delete mObstacleMap;
-        delete mFlowFieldZ;
+        delete[] mObstacleMap;
+        delete[] mFlowFieldZ;
         bGameRunning = false;
     }
 
@@ -495,9 +514,9 @@ public:
     bool CheckProjectileCollision(mCollider& p, mCollider& o)
     {
         return true
-            && p.position.x + p.size.x >= o.position.x
+            && p.position.x + p.size.x > o.position.x
             && p.position.x < o.position.x + o.size.x
-            && p.position.y + p.size.y >= o.position.y
+            && p.position.y + p.size.y > o.position.y
             && p.position.y < o.position.y + o.size.y;
     }
 
@@ -505,7 +524,7 @@ public:
     {
         if (monster->collider->tag == "_destroyed_")
             return false;
-        if (mProjectiles.size() > 0 && CheckProjectileCollision(mProjectileCollider, *(monster->collider)))
+        if (!mProjectiles.empty() && CheckProjectileCollision(mProjectileCollider, *(monster->collider)))
         {
             monster->health -= 50;
             if (monster->health <= 0)
@@ -514,16 +533,29 @@ public:
             mProjectiles.pop_back();
             return true;
         }
+        for (auto* m : mMonsters)
+        {
+            if (m == monster)
+                continue;
+            if (CheckProjectileCollision(*(monster->collider), *(m->collider)))
+            {
+                monster->position = monster->oPosition;
+                m->position = m->oPosition;
+                FindPath(monster);
+                FindPath(m);
+                return true;
+            }
+        }
         return false;
     }
 
     bool CheckCollisions()
     {
         mPossibleCollidables = 0;
-        for (auto c : mColliders)
+        for (auto* c : mColliders)
         {
             // Only check collisions if there is a projectile
-            if (mProjectiles.size() > 0)
+            if (!mProjectiles.empty())
             {
                 if (CheckProjectileCollision(mProjectileCollider, *c))
                 {
@@ -550,11 +582,10 @@ public:
                 {
                     return true;
                 }
-                else if (c->tag == "monster")
-                {
-                    player.health -= 25;
-                    return true;
-                }
+            }
+            if (c->tag == "monster" && CheckProjectileCollision(mPlayerCollider, *c))
+            {
+                return true;
             }
             mPossibleCollidables += 1;
         }
@@ -618,7 +649,7 @@ public:
             player.nX = player.x + TILE_SIZE;
             mSpriteStateName = "idle-right";
         }
-        if (GetKey(olc::SPACE).bPressed && mProjectiles.size() == 0)
+        if (GetKey(olc::SPACE).bPressed && mProjectiles.empty())
         {
             mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
                 { player.x + 16.0f , player.y + 16.0f },
@@ -629,10 +660,28 @@ public:
         }
     }
 
+    void FixPlayerPosition()
+    {
+        if (player.walkingX && player.nX % TILE_SIZE != 0)
+        {
+            if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
+                player.x += 1;
+            if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
+                player.x -= 1;
+        }
+        if (player.walkingY && player.nY % TILE_SIZE != 0)
+        {
+            if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
+                player.y += 1;
+            if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
+                player.y -= 1;
+        }
+    }
+
     void UpdatePlayer()
     {
         mPlayerCollider.position = { static_cast<float>(player.nX), static_cast<float>(player.nY) };
-
+        FixPlayerPosition();
         if (player.walkingX)
         {
             if (!CheckCollisions() && player.nX < (mMapSizeX * TILE_SIZE) && player.nX > -TILE_SIZE)
@@ -707,7 +756,7 @@ public:
         float tempX = mRandomPlayerPos(gen) * TILE_SIZE;
         float tempY = mRandomPlayerPos(gen) * TILE_SIZE;
         bool shouldSpawn = false;
-        for (auto c : mColliders)
+        for (auto* c : mColliders)
         {
             if (tempX == c->position.x || tempY == c->position.y)
             {
@@ -732,7 +781,7 @@ public:
 
     void FindPath(mMonster* monster)
     {
-        ReloadObstacleMap();
+        ReloadObstacleMap(monster);
         auto p = [&](int x, int y) { return y * mMapSizeX + x; };
         std::list<std::tuple<int, int, int>> nodes;
         nodes.push_back({ monster->endPos.x, monster->endPos.y, 1 });
@@ -777,19 +826,18 @@ public:
         int locX = monster->startPos.x;
         int locY = monster->startPos.y;
         bool noPath = false;
-
         while (!(locX == monster->endPos.x && locY == monster->endPos.y) && !noPath)
         {
             std::list<std::tuple<int, int, int>> listNeighbours;
 
             // 4-Way Connectivity
-            if ((locY - 1) >= 0 && mFlowFieldZ[p(locX, locY - 1)] > 0)
+            if ((locY - 1) >= 0 && mFlowFieldZ[p(locX, locY - 1)] >= 0)
                 listNeighbours.push_back({ locX, locY - 1, mFlowFieldZ[p(locX, locY - 1)] });
-            if ((locX + 1) < mMapSizeX && mFlowFieldZ[p(locX + 1, locY)] > 0)
+            if ((locX + 1) <= mMapSizeX && mFlowFieldZ[p(locX + 1, locY)] >= 0)
                 listNeighbours.push_back({ locX + 1, locY, mFlowFieldZ[p(locX + 1, locY)] });
-            if ((locY + 1) < mMapSizeY && mFlowFieldZ[p(locX, locY + 1)] > 0)
+            if ((locY + 1) <= mMapSizeY && mFlowFieldZ[p(locX, locY + 1)] >= 0)
                 listNeighbours.push_back({ locX, locY + 1, mFlowFieldZ[p(locX, locY + 1)] });
-            if ((locX - 1) >= 0 && mFlowFieldZ[p(locX - 1, locY)] > 0)
+            if ((locX - 1) >= 0 && mFlowFieldZ[p(locX - 1, locY)] >= 0)
                 listNeighbours.push_back({ locX - 1, locY, mFlowFieldZ[p(locX - 1, locY)] });
 
             listNeighbours.sort([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
@@ -805,8 +853,13 @@ public:
                 locY = std::get<1>(listNeighbours.front());
                 path.push_back({ locX, locY });
             }
+	    if (path.size() > 250)
+	    {
+		path.clear();
+		noPath = true;
+	    }
         }
-        if (path.size() > 0)
+        if (!path.empty())
             path.pop_back();
         monster->path = path;
     }
@@ -820,8 +873,9 @@ public:
         monster->collider->position.y = monster->position.y * TILE_SIZE;
         if (CheckMonsterCollision(monster))
             return;
-        if (monster->path.size() > 0)
+        if (!monster->path.empty())
         {
+            monster->oPosition = monster->position;
             monster->nPosition = { monster->path.front().first, monster->path.front().second };
 
             if (monster->position.x != monster->nPosition.x && monster->position.y == monster->nPosition.y)
@@ -866,37 +920,19 @@ public:
     void DrawMonsters()
     {
         auto p = [&](int x, int y) { return y * mMapSizeX + x; };
-        for (auto monster : mMonsters)
+        for (auto* monster : mMonsters)
         {
             if (monster->collider->tag == "_destroyed_")
                 continue;
             FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
             DrawStringDecal((monster->position * TILE_SIZE) - camera.vecCamPos, std::to_string(monster->health), olc::GREEN);
-            if (std::abs(player.x / TILE_SIZE - monster->position.x) < 10 &&
-                std::abs(player.y / TILE_SIZE - monster->position.y) < 10 &&
+            if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV &&
+                std::abs(player.y / TILE_SIZE - monster->position.y) < FOV &&
                 (mStoredPlayerX != player.x || mStoredPlayerY != player.y))
             {
                 monster->path.clear();
-                monsterTempX = 0;
-                monsterTempY = 0;
 
-                if (monster->position.x - static_cast<int>(monster->position.x) > 0.5f)
-                    monsterTempX = std::ceil(monster->position.x);
-                else if (monster->position.x - static_cast<int>(monster->position.x) < 0.5f &&
-                    monster->position.x - static_cast<int>(monster->position.x) > 0.0f)
-                    monsterTempX = std::floor(monster->position.x);
-                else
-                    monsterTempX = monster->position.x;
-
-                if (monster->position.y - static_cast<int>(monster->position.y) > 0.5f)
-                    monsterTempY = std::ceil(monster->position.y);
-                else if (monster->position.y - static_cast<int>(monster->position.y) < 0.5f &&
-                    monster->position.y - static_cast<int>(monster->position.y) > 0.0f)
-                    monsterTempY = std::floor(monster->position.y);
-                else
-                    monsterTempY = monster->position.y;
-
-                monster->startPos = { monsterTempX , monsterTempY };
+                monster->startPos = { monster->oPosition.x, monster->oPosition.y };
                 monster->endPos = { player.nX / TILE_SIZE, player.nY / TILE_SIZE };
                 FindPath(monster);
                 mStoredPlayerX = player.x;
@@ -918,26 +954,26 @@ public:
     void DrawMap()
     {
         mTilesDrawnOnMap = 0;
-        for (auto& tile : mTiles)
+        for (auto* tile : mTiles)
         {
             // Set rendering bounds, if tile that is suppose to be rendered is not within the viewport
             // Or if the tile is destroyed we shall not render it.
-            if (tile.position.y + TILE_SIZE < camera.vecCamPos.y ||
-                tile.position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
-                tile.position.x + TILE_SIZE < camera.vecCamPos.x ||
-                tile.position.x > camera.vecCamPos.x + camera.vecCamViewSize.x)
+            if (tile->position.y + TILE_SIZE < camera.vecCamPos.y ||
+                tile->position.y > camera.vecCamPos.y + camera.vecCamViewSize.y ||
+                tile->position.x + TILE_SIZE < camera.vecCamPos.x ||
+                tile->position.x > camera.vecCamPos.x + camera.vecCamViewSize.x)
                 continue;
-            if (tile.destroyed)
+            if (tile->destroyed)
                 continue;
 
-            DrawPartialDecal(tile.position - camera.vecCamPos, mSpriteSheet.Decal(), tile.tilesheetPos, { 32, 32 });
+            DrawPartialDecal(tile->position - camera.vecCamPos, mSpriteSheet.Decal(), tile->tilesheetPos, { 32, 32 });
             mTilesDrawnOnMap += 1;
         }
     }
 
     void RespawnColliders()
     {
-        for (auto c : mColliders)
+        for (auto* c : mColliders)
         {
             if (c->tag == "_destroyed_")
             {
@@ -947,7 +983,7 @@ public:
             }
 
         }
-        for (auto m : mMonsters)
+        for (auto* m : mMonsters)
         {
             m->health = 100;
         }
@@ -960,13 +996,13 @@ public:
         DrawMap();
         PlayerInput();
         UpdatePlayer();
-        if (mProjectiles.size() > 0)
+        if (!mProjectiles.empty())
             UpdateProjectile(*mProjectiles.back());
         DrawMonsters();
         // Debug collidables
         if (mDebugMode)
         {
-            for (auto c : mColliders)
+            for (auto* c : mColliders)
             {
                 if (c->tag == "_destroyed_")
                     continue;
@@ -981,7 +1017,7 @@ public:
     {
         // Panic Key
         if (GetKey(olc::ESCAPE).bPressed)
-            return false;
+            mGameState = 5;
         if (GetKey(olc::F11).bPressed)
             mDebugMode = !mDebugMode;
         if (GetKey(olc::F2).bPressed)
@@ -993,7 +1029,7 @@ public:
         case GameState::SPLASHSCREEN:
             if (mSplashScreen.AnimateSplashScreen(fElapsedTime))
                 return true;
-            mGameState += 1;
+            mGameState++;
             break;
         case GameState::MENU:
             // Draw menu here
