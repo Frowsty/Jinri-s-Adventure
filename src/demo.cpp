@@ -146,15 +146,12 @@ private:
         olc::vi2d startPos;
         olc::vi2d endPos;
         std::list<std::pair<int, int>> path;
-        std::string walkMode;
         mCollider* collider;
     };
 
     std::vector<mMonster*> mMonsters;
     int monsterTempX = 0;
     int monsterTempY = 0;
-
-    float mTimer = 0.0f;
 
 
 public:
@@ -356,7 +353,7 @@ public:
             float y = SpdDistr(gen);
             mColliders.push_back(new mCollider{ "monster", { x, y }, { TILE_SIZE, TILE_SIZE } });
             mMonsters.push_back(new mMonster{ { x, y }, { static_cast<int>(x), static_cast<int>(y) }, { static_cast<int>(x), static_cast<int>(y) },
-                                                      100, { 1, 1 }, { 5, 5 }, {}, "",mColliders.back() });
+                                                      100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
         }
 
         // Set Camera position
@@ -902,8 +899,6 @@ public:
 
                 if (std::abs(monster->position.x - monster->nPosition.x) < 0.1)
                 {
-                    if (monster->walkMode != "")
-                        monster->walkMode = "";
                     monster->position.x = monster->nPosition.x;
                     if (!monster->path.empty())
                         monster->path.pop_front();
@@ -918,9 +913,7 @@ public:
                     monster->position.y -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
 
                 if (std::abs(monster->position.y - monster->nPosition.y) < 0.1)
-                {
-                    if (monster->walkMode != "")
-                        monster->walkMode = "";
+                {                 
                     monster->position.y = monster->nPosition.y;
                     if (!monster->path.empty())
                         monster->path.pop_front();
