@@ -43,6 +43,7 @@ private:
     std::mt19937 gen;
     std::uniform_int_distribution<> PosDistr;
     std::uniform_int_distribution<> SpdDistr;
+    std::uniform_int_distribution<> EnmDistr;
     std::uniform_int_distribution<> mRandomPlayerPos;
 
     bool bGameRunning;
@@ -145,12 +146,15 @@ private:
         olc::vi2d startPos;
         olc::vi2d endPos;
         std::list<std::pair<int, int>> path;
+        std::string walkMode;
         mCollider* collider;
     };
 
     std::vector<mMonster*> mMonsters;
     int monsterTempX = 0;
     int monsterTempY = 0;
+
+    float mTimer = 0.0f;
 
 
 public:
@@ -254,7 +258,7 @@ public:
                 {
                     if (!m->path.empty())
                     {
-                        for (auto& cord : m->path)
+                        for (const auto& cord : m->path)
                         {
                             if (cord.first == x && cord.second == y)
                                 mObstacleMap[p(cord.first, cord.second)] = true;
@@ -286,6 +290,7 @@ public:
         gen = std::mt19937(rd());
         PosDistr = std::uniform_int_distribution<>(0, WINDOW_WIDTH);
         SpdDistr = std::uniform_int_distribution<>(20, 50);
+        EnmDistr = std::uniform_int_distribution<>(-10, 10);
         mRandomPlayerPos = std::uniform_int_distribution<>(1, mMapSizeX - 1);
 
         // Setup menu options
@@ -323,6 +328,7 @@ public:
         PlayerSprite.type = olc::AnimatedSprite::SPRITE_TYPE::DECAL;
         PlayerSprite.mode = olc::AnimatedSprite::SPRITE_MODE::SINGLE;
         spritesheet = new olc::Renderable();
+
         spritesheet->Load("./sprites/character.png");
         PlayerSprite.spriteSheet = spritesheet;
         PlayerSprite.SetSpriteSize({ 32, 32 });
@@ -350,7 +356,7 @@ public:
             float y = SpdDistr(gen);
             mColliders.push_back(new mCollider{ "monster", { x, y }, { TILE_SIZE, TILE_SIZE } });
             mMonsters.push_back(new mMonster{ { x, y }, { static_cast<int>(x), static_cast<int>(y) }, { static_cast<int>(x), static_cast<int>(y) },
-                                                      100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
+                                                      100, { 1, 1 }, { 5, 5 }, {}, "",mColliders.back() });
         }
 
         // Set Camera position
@@ -853,11 +859,11 @@ public:
                 locY = std::get<1>(listNeighbours.front());
                 path.push_back({ locX, locY });
             }
-	    if (path.size() > 250)
-	    {
-		path.clear();
-		noPath = true;
-	    }
+            if (path.size() > 250)
+            {
+                path.clear();
+                noPath = true;
+            }
         }
         if (!path.empty())
             path.pop_back();
@@ -896,8 +902,11 @@ public:
 
                 if (std::abs(monster->position.x - monster->nPosition.x) < 0.1)
                 {
+                    if (monster->walkMode != "")
+                        monster->walkMode = "";
                     monster->position.x = monster->nPosition.x;
-                    monster->path.pop_front();
+                    if (!monster->path.empty())
+                        monster->path.pop_front();
                 }
             }
 
@@ -910,8 +919,11 @@ public:
 
                 if (std::abs(monster->position.y - monster->nPosition.y) < 0.1)
                 {
+                    if (monster->walkMode != "")
+                        monster->walkMode = "";
                     monster->position.y = monster->nPosition.y;
-                    monster->path.pop_front();
+                    if (!monster->path.empty())
+                        monster->path.pop_front();
                 }
             }
         }
@@ -934,13 +946,30 @@ public:
 
                 monster->startPos = { monster->oPosition.x, monster->oPosition.y };
                 monster->endPos = { player.nX / TILE_SIZE, player.nY / TILE_SIZE };
+
                 FindPath(monster);
+
                 mStoredPlayerX = player.x;
                 mStoredPlayerY = player.y;
             }
+            else if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV &&
+		     std::abs(player.y / TILE_SIZE - monster->position.y) < FOV &&
+		     monster->path.empty() && std::abs((player.nX / TILE_SIZE) - monster->oPosition.x) > 1 &&
+		     std::abs((player.nY / TILE_SIZE) - monster->oPosition.y) > 1)
+            {
+		int endX = monster->oPosition.x - EnmDistr(gen);
+		int endY = monster->oPosition.y - EnmDistr(gen);
+		if (endX == monster->oPosition.x)
+		    endX++;
+		if (endY == monster->oPosition.y)
+		    endY++;
+                monster->startPos = { monster->oPosition.x, monster->oPosition.y };
+                monster->endPos = { endX, endY };
+                FindPath(monster);
+            }
             if (mDebugMode)
             {
-                for (auto& coordinate : monster->path)
+                for (const auto coordinate : monster->path)
                 {
                     FillRectDecal({ static_cast<float>(coordinate.first * TILE_SIZE - camera.vecCamPos.x) + 2,
                             static_cast<float>(coordinate.second * TILE_SIZE - camera.vecCamPos.y) + 2 },
