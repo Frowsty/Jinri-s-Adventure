@@ -1,10 +1,11 @@
-#define OLC_PGE_APPLICATION
+ #define OLC_PGE_APPLICATION
 #define OLC_PGEX_ANIMSPR
 #include "olcPixelGameEngine.h"
 #include "olcPGEX_AnimatedSprite.h"
 #include "olcPGEX_Camera2D.h"
 #include "olcPGEX_SplashScreen.h"
 #include <random>
+#include <deque>
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -14,7 +15,7 @@ using json = nlohmann::json;
 #define M_PI 3.14159
 #define TILE_SIZE 32
 #define SPEED 150
-#define FOV 15
+#define FOV 7
 class JinrisGame : public olc::PixelGameEngine
 {
 private:
@@ -89,7 +90,7 @@ private:
         float vy;
     };
 
-    std::list<mParticle> mParticles;
+    std::deque<mParticle> mParticles;
 
     struct mTile
     {
@@ -124,7 +125,7 @@ private:
     float mProjectileRotation = 0.0f;
 
     olc::Renderable mSpriteSheet;
-    std::list<mTile*> mTiles;
+    std::deque<mTile*> mTiles;
     int mMapSizeX;
     int mMapSizeY;
 
@@ -140,18 +141,14 @@ private:
     struct mMonster
     {
         olc::vf2d position;
-        olc::vi2d nPosition;
-        olc::vi2d oPosition;
         int health;
-        olc::vi2d startPos;
-        olc::vi2d endPos;
-        std::list<std::pair<int, int>> path;
         mCollider* collider;
+	olc::vi2d savedPlayerPos;
+	std::vector<mProjectile*> projectile;
+	mCollider* projectileCollider;
     };
 
     std::vector<mMonster*> mMonsters;
-    int monsterTempX = 0;
-    int monsterTempY = 0;
 
 
 public:
@@ -232,44 +229,6 @@ public:
         }
     }
 
-    void ReloadObstacleMap(mMonster* monster)
-    {
-        auto p = [&](int x, int y) { return y * mMapSizeX + x; };
-        int minFOV = monster->position.x - FOV;
-        int maxFOV = monster->position.x + FOV;
-        if (minFOV < 0)
-            minFOV = 0;
-        if (maxFOV > mMapSizeX)
-            maxFOV = mMapSizeX;
-        for (int x = minFOV; x < maxFOV; x++)
-        {
-            for (int y = minFOV; y < maxFOV; y++)
-            {
-                mObstacleMap[p(x, y)] = false;
-                for (auto* c : mColliders)
-                {
-                    if (c->position.x / TILE_SIZE == x && c->position.y / TILE_SIZE == y && c->tag != "_destroyed_")
-                        mObstacleMap[p(x, y)] = true;
-                }
-                for (auto* m : mMonsters)
-                {
-                    if (!m->path.empty())
-                    {
-                        for (const auto& cord : m->path)
-                        {
-                            if (cord.first == x && cord.second == y)
-                                mObstacleMap[p(cord.first, cord.second)] = true;
-                        }
-                    }
-                }
-                if (mObstacleMap[p(x, y)])
-                    mFlowFieldZ[p(x, y)] = -1;
-                else
-                    mFlowFieldZ[p(x, y)] = 0;
-            }
-        }
-    }
-
     bool OnUserCreate() override
     {
         // Set window title
@@ -278,10 +237,6 @@ public:
         bGameRunning = true;
 
         LoadMap();
-
-        // Init obstacle and flowmap
-        mObstacleMap = new bool[mMapSizeX * mMapSizeY]{ false };
-        mFlowFieldZ = new int[mMapSizeX * mMapSizeY]{ 0 };
 
         // Initialize Random generator
         gen = std::mt19937(rd());
@@ -310,7 +265,7 @@ public:
         mMenuTutorial.insert(std::make_pair("STORYLINE", mStoryLine));
 
         // Create All Particles
-        for (int i = 0; i < 150; i++)
+        for (int i = 0; i < 200; i++)
         {
             mParticle p = { static_cast<float>(PosDistr(gen)), static_cast<float>(PosDistr(gen)), 0.f, static_cast<float>(SpdDistr(gen)) };
             mParticles.emplace_back(p);
@@ -351,9 +306,8 @@ public:
         {
             float x = SpdDistr(gen);
             float y = SpdDistr(gen);
-            mColliders.push_back(new mCollider{ "monster", { x, y }, { TILE_SIZE, TILE_SIZE } });
-            mMonsters.push_back(new mMonster{ { x, y }, { static_cast<int>(x), static_cast<int>(y) }, { static_cast<int>(x), static_cast<int>(y) },
-                                                      100, { 1, 1 }, { 5, 5 }, {}, mColliders.back() });
+            mColliders.push_back(new mCollider{ "monster", { x * TILE_SIZE, y * TILE_SIZE }, { TILE_SIZE, TILE_SIZE } });
+            mMonsters.push_back(new mMonster{ { x, y }, 100,  mColliders.back(), { player.nX, player.nY }, { } });
         }
 
         // Set Camera position
@@ -369,8 +323,6 @@ public:
     void ExitGame()
     {
         delete spritesheet;
-        delete[] mObstacleMap;
-        delete[] mFlowFieldZ;
         bGameRunning = false;
     }
 
@@ -507,7 +459,7 @@ public:
     }
 
 
-    bool CheckCollision(mCollider& left, mCollider& right)
+    bool CheckPositionalCollision(mCollider& left, mCollider& right)
     {
         return true
             && left.position.x == right.position.x
@@ -536,19 +488,6 @@ public:
             mProjectiles.pop_back();
             return true;
         }
-        for (auto* m : mMonsters)
-        {
-            if (m == monster)
-                continue;
-            if (CheckProjectileCollision(*(monster->collider), *(m->collider)))
-            {
-                monster->position = monster->oPosition;
-                m->position = m->oPosition;
-                FindPath(monster);
-                FindPath(m);
-                return true;
-            }
-        }
         return false;
     }
 
@@ -567,6 +506,7 @@ public:
                         c->tile->destroyed = true;
                         c->tag = "_destroyed_";
                         mProjectiles.pop_back();
+			return true;
                     }
                 }
             }
@@ -575,7 +515,7 @@ public:
                 std::abs(c->position.x - player.nX) > TILE_SIZE ||
                 c->tag == "_destroyed_")
                 continue;
-            if (CheckCollision(mPlayerCollider, *c))
+            if (CheckPositionalCollision(mPlayerCollider, *c))
             {
                 if (c->tag == "collectable")
                 {
@@ -586,7 +526,7 @@ public:
                     return true;
                 }
             }
-            if (c->tag == "monster" && CheckProjectileCollision(mPlayerCollider, *c))
+            if (c->tag == "monster" && CheckPositionalCollision(mPlayerCollider, *c))
             {
                 return true;
             }
@@ -657,34 +597,17 @@ public:
             mProjectiles.push_back(new mProjectile{ { player.x + 16.0f , player.y + 16.0f },
                 { player.x + 16.0f , player.y + 16.0f },
                 { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) }, false, mSpriteStateName });
+	    
             mProjectileCollider = { "projectile", { player.x + 16.0f, player.y + 16.0f },
                 { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
+	    
             mProjectileRotation = 0.0f;
-        }
-    }
-
-    void FixPlayerPosition()
-    {
-        if (player.walkingX && player.nX % TILE_SIZE != 0)
-        {
-            if (mSpriteStateName == "idle-right" || mSpriteStateName == "walking-right")
-                player.x += 1;
-            if (mSpriteStateName == "idle-left" || mSpriteStateName == "walking-left")
-                player.x -= 1;
-        }
-        if (player.walkingY && player.nY % TILE_SIZE != 0)
-        {
-            if (mSpriteStateName == "idle-down" || mSpriteStateName == "walking-down")
-                player.y += 1;
-            if (mSpriteStateName == "idle-up" || mSpriteStateName == "walking-up")
-                player.y -= 1;
         }
     }
 
     void UpdatePlayer()
     {
         mPlayerCollider.position = { static_cast<float>(player.nX), static_cast<float>(player.nY) };
-        FixPlayerPosition();
         if (player.walkingX)
         {
             if (!CheckCollisions() && player.nX < (mMapSizeX * TILE_SIZE) && player.nX > -TILE_SIZE)
@@ -782,194 +705,66 @@ public:
         }
     }
 
-    void FindPath(mMonster* monster)
+    void UpdateMonsterProjectile(mMonster* monster)
     {
-        ReloadObstacleMap(monster);
-        auto p = [&](int x, int y) { return y * mMapSizeX + x; };
-        std::list<std::tuple<int, int, int>> nodes;
-        nodes.push_back({ monster->endPos.x, monster->endPos.y, 1 });
 
-        while (!nodes.empty())
-        {
-            std::list<std::tuple<int, int, int>> newNodes;
+	// Run the movement for the projectile
+	if (!monster->projectile.empty())
+	{
+	    olc::vf2d direction = (olc::vf2d(player.x, player.y) * TILE_SIZE ) - (monster->position * TILE_SIZE);
+//	    std::cout << direction.x << " : " << direction.y << std::endl;
+	    float x = pow(direction.x, 2);
+	    float y = pow(direction.y, 2);
+	    float sqrtAns = sqrt(x + y);
+	    olc::vf2d normalized = direction / sqrtAns;
+	    std::cout << "Pos: " << normalized.x << " : " << normalized.y << std::endl;
 
-            for (auto& n : nodes)
-            {
-                int x = std::get<0>(n);
-                int y = std::get<1>(n);
-                int d = std::get<2>(n);
+	    DrawLine((monster->position * TILE_SIZE) - camera.vecCamPos, (monster->position - (normalized * 3)) * TILE_SIZE - camera.vecCamPos);
 
-                mFlowFieldZ[p(x, y)] = d;
+	    monster->projectile.back()->position -= (normalized * SPEED) * GetElapsedTime();
 
-                if ((x + 1) < mMapSizeX && mFlowFieldZ[p(x + 1, y)] == 0)
-                    newNodes.push_back({ x + 1, y, d + 1 });
-                if ((x - 1) >= 0 && mFlowFieldZ[p(x - 1, y)] == 0)
-                    newNodes.push_back({ x - 1, y, d + 1 });
-                if ((y + 1) < mMapSizeY && mFlowFieldZ[p(x, y + 1)] == 0)
-                    newNodes.push_back({ x, y + 1, d + 1 });
-                if ((y - 1) >= 0 && mFlowFieldZ[p(x, y - 1)] == 0)
-                    newNodes.push_back({ x, y - 1, d + 1 });
-
-            }
-
-            newNodes.sort([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
-                {
-                    return p(std::get<0>(n1), std::get<1>(n1)) < p(std::get<0>(n2), std::get<1>(n2));
-                });
-            newNodes.unique([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
-                {
-                    return p(std::get<0>(n1), std::get<1>(n1)) == p(std::get<0>(n2), std::get<1>(n2));
-                });
-
-            nodes.clear();
-            nodes.insert(nodes.begin(), newNodes.begin(), newNodes.end());
-        }
-
-        std::list<std::pair<int, int>> path;
-        int locX = monster->startPos.x;
-        int locY = monster->startPos.y;
-        bool noPath = false;
-        while (!(locX == monster->endPos.x && locY == monster->endPos.y) && !noPath)
-        {
-            std::list<std::tuple<int, int, int>> listNeighbours;
-
-            // 4-Way Connectivity
-            if ((locY - 1) >= 0 && mFlowFieldZ[p(locX, locY - 1)] >= 0)
-                listNeighbours.push_back({ locX, locY - 1, mFlowFieldZ[p(locX, locY - 1)] });
-            if ((locX + 1) <= mMapSizeX && mFlowFieldZ[p(locX + 1, locY)] >= 0)
-                listNeighbours.push_back({ locX + 1, locY, mFlowFieldZ[p(locX + 1, locY)] });
-            if ((locY + 1) <= mMapSizeY && mFlowFieldZ[p(locX, locY + 1)] >= 0)
-                listNeighbours.push_back({ locX, locY + 1, mFlowFieldZ[p(locX, locY + 1)] });
-            if ((locX - 1) >= 0 && mFlowFieldZ[p(locX - 1, locY)] >= 0)
-                listNeighbours.push_back({ locX - 1, locY, mFlowFieldZ[p(locX - 1, locY)] });
-
-            listNeighbours.sort([&](const std::tuple<int, int, int>& n1, const std::tuple<int, int, int>& n2)
-                {
-                    return std::get<2>(n1) < std::get<2>(n2);
-                });
-
-            if (listNeighbours.empty())
-                noPath = true;
-            else
-            {
-                locX = std::get<0>(listNeighbours.front());
-                locY = std::get<1>(listNeighbours.front());
-                path.push_back({ locX, locY });
-            }
-            if (path.size() > 250)
-            {
-                path.clear();
-                noPath = true;
-            }
-        }
-        if (!path.empty())
-            path.pop_back();
-        monster->path = path;
+	    monster->projectileCollider->position = monster->projectile.back()->position;
+	}
+        DrawDecal(monster->projectile.back()->position - camera.vecCamPos, mProjectileSprite.Decal());
+	FillRectDecal(monster->savedPlayerPos - camera.vecCamPos, { 16, 16 }, olc::RED);
     }
 
-    void MonsterMovement(mMonster* monster)
+    void CreateMonsterProjectile(mMonster* monster)
     {
-        bool walkingX = false;
-        bool walkingY = false;
+	// Save the end position (players position when the projectile was fired)
+	// Create the projectile and the collider for the projectile
+	if (monster->projectile.empty())
+	{
+	    monster->savedPlayerPos = { player.nX, player.nY };
+	    monster->projectile.push_back(new mProjectile{ { monster->position.x * TILE_SIZE, monster->position.y * TILE_SIZE },
+		    { monster->position.x * TILE_SIZE, monster->position.y * TILE_SIZE },
+		    { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) },
+			false, ""});
+	    monster->projectileCollider = new mCollider{ "projectile", monster->position,
+							 { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
 
-        monster->collider->position.x = monster->position.x * TILE_SIZE;
-        monster->collider->position.y = monster->position.y * TILE_SIZE;
-        if (CheckMonsterCollision(monster))
-            return;
-        if (!monster->path.empty())
-        {
-            monster->oPosition = monster->position;
-            monster->nPosition = { monster->path.front().first, monster->path.front().second };
-
-            if (monster->position.x != monster->nPosition.x && monster->position.y == monster->nPosition.y)
-                walkingX = true;
-            else
-                walkingY = true;
-            if (monster->position.y != monster->nPosition.y && monster->position.x == monster->nPosition.x && !walkingX)
-                walkingY = true;
-            else
-                walkingX = true;
-
-            if (walkingX)
-            {
-                if (monster->position.x - monster->nPosition.x < 0)
-                    monster->position.x += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
-                if (monster->position.x - monster->nPosition.x > 0)
-                    monster->position.x -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
-
-                if (std::abs(monster->position.x - monster->nPosition.x) < 0.1)
-                {
-                    monster->position.x = monster->nPosition.x;
-                    if (!monster->path.empty())
-                        monster->path.pop_front();
-                }
-            }
-
-            if (walkingY)
-            {
-                if (monster->position.y - monster->nPosition.y < 0)
-                    monster->position.y += (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
-                if (monster->position.y - monster->nPosition.y > 0)
-                    monster->position.y -= (SPEED / 2 * GetElapsedTime()) / TILE_SIZE;
-
-                if (std::abs(monster->position.y - monster->nPosition.y) < 0.1)
-                {                 
-                    monster->position.y = monster->nPosition.y;
-                    if (!monster->path.empty())
-                        monster->path.pop_front();
-                }
-            }
-        }
+	    std::cout << "Created everything" << std::endl;
+	}
     }
+	
 
-    void DrawMonsters()
+    void HandleMonsters()
     {
         auto p = [&](int x, int y) { return y * mMapSizeX + x; };
         for (auto* monster : mMonsters)
         {
             if (monster->collider->tag == "_destroyed_")
                 continue;
-            FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
+//            FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
             DrawStringDecal((monster->position * TILE_SIZE) - camera.vecCamPos, std::to_string(monster->health), olc::GREEN);
-            if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV &&
-                std::abs(player.y / TILE_SIZE - monster->position.y) < FOV &&
-                (mStoredPlayerX != player.x || mStoredPlayerY != player.y))
-            {
-                monster->path.clear();
 
-                monster->startPos = { monster->oPosition.x, monster->oPosition.y };
-                monster->endPos = { player.nX / TILE_SIZE, player.nY / TILE_SIZE };
+	    if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV && std::abs(player.y / TILE_SIZE - monster->position.y) < FOV)
+		CreateMonsterProjectile(monster);
 
-                FindPath(monster);
+	    if (monster->projectile.size() == 1)
+		UpdateMonsterProjectile(monster);
 
-                mStoredPlayerX = player.x;
-                mStoredPlayerY = player.y;
-            }
-            else if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV &&
-		     std::abs(player.y / TILE_SIZE - monster->position.y) < FOV &&
-		     monster->path.empty() && std::abs((player.nX / TILE_SIZE) - monster->oPosition.x) > 1 &&
-		     std::abs((player.nY / TILE_SIZE) - monster->oPosition.y) > 1)
-            {
-		int endX = monster->oPosition.x - EnmDistr(gen);
-		int endY = monster->oPosition.y - EnmDistr(gen);
-		if (endX == monster->oPosition.x)
-		    endX++;
-		if (endY == monster->oPosition.y)
-		    endY++;
-                monster->startPos = { monster->oPosition.x, monster->oPosition.y };
-                monster->endPos = { endX, endY };
-                FindPath(monster);
-            }
-            if (mDebugMode)
-            {
-                for (const auto coordinate : monster->path)
-                {
-                    FillRectDecal({ static_cast<float>(coordinate.first * TILE_SIZE - camera.vecCamPos.x) + 2,
-                            static_cast<float>(coordinate.second * TILE_SIZE - camera.vecCamPos.y) + 2 },
-                        { TILE_SIZE - 4, TILE_SIZE - 4 }, olc::WHITE);
-                }
-            }
-            MonsterMovement(monster);
+	    CheckMonsterCollision(monster);
         }
     }
 
@@ -1015,12 +810,12 @@ public:
     {
         if (mSpawnPlayer)
             SpawnPlayer();
-        DrawMap();
+//        DrawMap();
+	HandleMonsters();
         PlayerInput();
         UpdatePlayer();
         if (!mProjectiles.empty())
             UpdateProjectile(*mProjectiles.back());
-        DrawMonsters();
         // Debug collidables
         if (mDebugMode)
         {
@@ -1028,7 +823,7 @@ public:
             {
                 if (c->tag == "_destroyed_")
                     continue;
-                FillRectDecal(c->position - camera.vecCamPos, c->size, olc::RED);
+		FillRectDecal(c->position - camera.vecCamPos, c->size, olc::RED);
             }
             DrawStringDecal({ 1.0f, 30.0f }, "Collidables: " + std::to_string(mPossibleCollidables), olc::WHITE, { 2.0f, 2.0f });
             DrawStringDecal({ 1.0f, 50.0f }, "Tiles Drawn: " + std::to_string(mTilesDrawnOnMap), olc::WHITE, { 2.0f, 2.0f });
