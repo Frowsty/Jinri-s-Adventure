@@ -1,4 +1,4 @@
- #define OLC_PGE_APPLICATION
+#define OLC_PGE_APPLICATION
 #define OLC_PGEX_ANIMSPR
 #include "olcPixelGameEngine.h"
 #include "olcPGEX_AnimatedSprite.h"
@@ -15,7 +15,7 @@ using json = nlohmann::json;
 #define M_PI 3.14159
 #define TILE_SIZE 32
 #define SPEED 150
-#define FOV 7
+#define FOV 15
 class JinrisGame : public olc::PixelGameEngine
 {
 private:
@@ -473,6 +473,7 @@ public:
             && p.position.x < o.position.x + o.size.x
             && p.position.y + p.size.y > o.position.y
             && p.position.y < o.position.y + o.size.y;
+
     }
 
     bool CheckMonsterCollision(mMonster* monster)
@@ -488,6 +489,12 @@ public:
             mProjectiles.pop_back();
             return true;
         }
+	if (!monster->projectile.empty() && CheckProjectileCollision(mPlayerCollider, *(monster->projectileCollider)))
+	{
+	    player.health -= 5;
+	    DeleteMonsterProjectile(monster);
+	    return true;
+	}
         return false;
     }
 
@@ -503,10 +510,7 @@ public:
                 {
                     if (c->tag == "map_terrain")
                     {
-                        c->tile->destroyed = true;
-                        c->tag = "_destroyed_";
                         mProjectiles.pop_back();
-			return true;
                     }
                 }
             }
@@ -705,28 +709,30 @@ public:
         }
     }
 
-    void UpdateMonsterProjectile(mMonster* monster)
+    void HandleMonsterProjectile(mMonster* monster)
     {
 
 	// Run the movement for the projectile
 	if (!monster->projectile.empty())
 	{
-	    olc::vf2d direction = (olc::vf2d(player.x, player.y) * TILE_SIZE ) - (monster->position * TILE_SIZE);
-//	    std::cout << direction.x << " : " << direction.y << std::endl;
+	    olc::vf2d direction = (monster->position * TILE_SIZE) - monster->savedPlayerPos;
 	    float x = pow(direction.x, 2);
 	    float y = pow(direction.y, 2);
 	    float sqrtAns = sqrt(x + y);
 	    olc::vf2d normalized = direction / sqrtAns;
-	    std::cout << "Pos: " << normalized.x << " : " << normalized.y << std::endl;
 
-	    DrawLine((monster->position * TILE_SIZE) - camera.vecCamPos, (monster->position - (normalized * 3)) * TILE_SIZE - camera.vecCamPos);
-
-	    monster->projectile.back()->position -= (normalized * SPEED) * GetElapsedTime();
+	    monster->projectile.back()->position -= (normalized * (SPEED * 2)) * GetElapsedTime();
 
 	    monster->projectileCollider->position = monster->projectile.back()->position;
 	}
         DrawDecal(monster->projectile.back()->position - camera.vecCamPos, mProjectileSprite.Decal());
-	FillRectDecal(monster->savedPlayerPos - camera.vecCamPos, { 16, 16 }, olc::RED);
+    }
+
+    void DeleteMonsterProjectile(mMonster* monster)
+    {
+	monster->projectile.pop_back();
+	monster->savedPlayerPos = { 0, 0 };
+	monster->projectileCollider->tag = "_destroyed_";
     }
 
     void CreateMonsterProjectile(mMonster* monster)
@@ -735,15 +741,14 @@ public:
 	// Create the projectile and the collider for the projectile
 	if (monster->projectile.empty())
 	{
-	    monster->savedPlayerPos = { player.nX, player.nY };
+	    monster->savedPlayerPos = { player.nX + 16, player.nY + 16 };
 	    monster->projectile.push_back(new mProjectile{ { monster->position.x * TILE_SIZE, monster->position.y * TILE_SIZE },
 		    { monster->position.x * TILE_SIZE, monster->position.y * TILE_SIZE },
 		    { static_cast<float>(mProjectileSprite.Sprite()->width), static_cast<float>(mProjectileSprite.Sprite()->height) },
-			false, ""});
+		      false, ""});
 	    monster->projectileCollider = new mCollider{ "projectile", monster->position,
-							 { static_cast<float>(mProjectileSprite.Sprite()->width - 2), static_cast<float>(mProjectileSprite.Sprite()->height) } };
-
-	    std::cout << "Created everything" << std::endl;
+							 { static_cast<float>(mProjectileSprite.Sprite()->width - 2),
+							   static_cast<float>(mProjectileSprite.Sprite()->height) } };
 	}
     }
 	
@@ -755,14 +760,19 @@ public:
         {
             if (monster->collider->tag == "_destroyed_")
                 continue;
-//            FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
+            FillRectDecal((monster->position * TILE_SIZE) - camera.vecCamPos, { TILE_SIZE, TILE_SIZE }, olc::BLUE);
             DrawStringDecal((monster->position * TILE_SIZE) - camera.vecCamPos, std::to_string(monster->health), olc::GREEN);
 
 	    if (std::abs(player.x / TILE_SIZE - monster->position.x) < FOV && std::abs(player.y / TILE_SIZE - monster->position.y) < FOV)
 		CreateMonsterProjectile(monster);
 
-	    if (monster->projectile.size() == 1)
-		UpdateMonsterProjectile(monster);
+	    if (!monster->projectile.empty())
+		HandleMonsterProjectile(monster);
+
+	    if (!monster->projectile.empty() &&
+		std::abs(monster->position.x - monster->projectile.back()->position.x / TILE_SIZE) > FOV / 2 &&
+		std::abs(monster->position.y - monster->projectile.back()->position.y / TILE_SIZE) > FOV / 2)
+		DeleteMonsterProjectile(monster);
 
 	    CheckMonsterCollision(monster);
         }
@@ -806,16 +816,35 @@ public:
         }
     }
 
+    void DrawHUD()
+    {
+	DrawStringDecal({ 1.0f, 10.0f }, "Health: " + std::to_string(player.health), olc::GREEN, { 1.5f, 1.5f });
+    }
+
+    void GameOver()
+    {
+	if (player.health <= 0)
+	{
+	    mGameState = GameState::END;
+	}
+    }
+
     void RunGame()
     {
         if (mSpawnPlayer)
             SpawnPlayer();
-//        DrawMap();
+        DrawMap();
 	HandleMonsters();
         PlayerInput();
         UpdatePlayer();
         if (!mProjectiles.empty())
             UpdateProjectile(*mProjectiles.back());
+	// Draw the game HUD
+	DrawHUD();
+
+	// Check if we lost
+	GameOver();
+	
         // Debug collidables
         if (mDebugMode)
         {
